@@ -4,7 +4,7 @@
 # Usage: curl -sfL https://raw.githubusercontent.com/r0otx/asuswrt-merlin-amneziawg/main/install-online.sh | sh
 # =============================================================
 
-REPO="r0otx/asuswrt-merlin-amneziawg"
+REPO="stxlvn/asuswrt-merlin-amneziawg"
 TMP_DIR=""
 
 echo ""
