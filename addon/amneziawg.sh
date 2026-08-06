@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.1.6"
+AWG_VERSION="1.2.0"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -23,8 +23,9 @@ SCRIPT_NAME="amneziawg"
 RT_TABLE=300
 AWG_CHAIN="AWG"
 LOCKDIR="/tmp/.awg_lock"
-V2FLY_GEOIP_BASE="https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text"
-GEOIP_SERVICES="telegram google facebook twitter netflix cloudflare fastly cloudfront"
+ALLOWDOMAINS_BASE="https://raw.githubusercontent.com/itdoginfo/allow-domains/main"
+GEOIP_SERVICES="cloudflare cloudfront digitalocean discord google_meet hetzner meta ovh roblox telegram twitter"
+GEOSITE_SERVICES="cloudflare cloudfront digitalocean discord google_ai google_meet google_play hdrezka hetzner meta ovh roblox telegram tiktok twitter youtube"
 
 # Ensure Entware binaries are in PATH (not set when called from httpd/service-event)
 export PATH="/opt/bin:/opt/sbin:$PATH"
@@ -160,16 +161,33 @@ human_size(){
     fi
 }
 
-# Download a single GeoIP service list (IPv4 only)
+# Download a single GeoIP service subnet list (IPv4 only)
+# Source: github.com/itdoginfo/allow-domains (Subnets/IPv4/<svc>.lst)
 download_geoip_service(){
     local svc="$1"
     svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
     [ -z "$svc" ] && return 1
     local tmp="$GEO_DIR/geoip/.dl_${svc}.tmp"
-    if curl -sfL --connect-timeout 10 --max-time 30 "${V2FLY_GEOIP_BASE}/${svc}.txt" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
-        grep -v ":" "$tmp" > "$GEO_DIR/geoip/v2fly_${svc}.cidr"
+    if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/Subnets/IPv4/${svc}.lst" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        grep -v ":" "$tmp" > "$GEO_DIR/geoip/${svc}.cidr"
         rm -f "$tmp"
-        [ -s "$GEO_DIR/geoip/v2fly_${svc}.cidr" ] || { rm -f "$GEO_DIR/geoip/v2fly_${svc}.cidr"; return 1; }
+        [ -s "$GEO_DIR/geoip/${svc}.cidr" ] || { rm -f "$GEO_DIR/geoip/${svc}.cidr"; return 1; }
+        return 0
+    fi
+    rm -f "$tmp"
+    return 1
+}
+
+# Download a single GeoSite service domain list into the cache.
+# Source: github.com/itdoginfo/allow-domains (Services/<svc>.lst)
+download_geosite_service(){
+    local svc="$1"
+    svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+    [ -z "$svc" ] && return 1
+    mkdir -p "$GEO_DIR/services"
+    local tmp="$GEO_DIR/services/.dl_${svc}.tmp"
+    if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/Services/${svc}.lst" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        mv "$tmp" "$GEO_DIR/services/${svc}.txt"
         return 0
     fi
     rm -f "$tmp"
@@ -198,25 +216,26 @@ download_all_geo(){
     done
     log_msg "GeoIP: $ok/$total service lists downloaded"
 
-    # Download v2fly domain database
-    log_msg "Downloading v2fly domain database..."
+    # Download all GeoSite service domain lists (cached individually)
+    log_msg "Downloading domain lists (allow-domains)..."
     update_status
-    local tmp_yml="$GEO_DIR/v2fly_all.yml.tmp"
-    if curl -sfL --connect-timeout 10 --max-time 120 "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat_plain.yml" \
-        -o "$tmp_yml" 2>/dev/null; then
-        if [ -s "$tmp_yml" ]; then
-            mv "$tmp_yml" "$GEO_DIR/v2fly_all.yml"
-            grep '  - name: ' "$GEO_DIR/v2fly_all.yml" | sed 's/.*- name: //' | sort > "$GEO_DIR/v2fly_categories.txt"
-            cp "$GEO_DIR/v2fly_categories.txt" /www/user/v2fly_categories.htm 2>/dev/null
-            log_msg "GeoSite: $(wc -l < "$GEO_DIR/v2fly_categories.txt") categories downloaded"
+    local gs_count=0 gs_total=0 gs_ok=0
+    for svc in $GEOSITE_SERVICES; do
+        gs_total=$((gs_total + 1))
+    done
+    for svc in $GEOSITE_SERVICES; do
+        gs_count=$((gs_count + 1))
+        log_msg "GeoSite: downloading $svc ($gs_count/$gs_total)..."
+        if download_geosite_service "$svc"; then
+            gs_ok=$((gs_ok + 1))
         else
-            rm -f "$tmp_yml"
-            log_msg "WARNING: v2fly domain download empty"
+            log_msg "WARNING: GeoSite $svc failed"
         fi
-    else
-        rm -f "$tmp_yml"
-        log_msg "WARNING: v2fly domain download failed"
-    fi
+        update_status
+    done
+    echo "$GEOSITE_SERVICES" | tr ' ' '\n' | sort > "$GEO_DIR/domain_categories.txt"
+    cp "$GEO_DIR/domain_categories.txt" /www/user/domain_categories.htm 2>/dev/null
+    log_msg "GeoSite: $gs_ok/$gs_total service lists downloaded"
 
     # Save timestamp
     date +%s > "$GEO_DIR/.last_update"
@@ -346,19 +365,19 @@ setup_firewall(){
     [ -n "$ipset_entries" ] && [ "$ipset_entries" -ge 131072 ] 2>/dev/null && \
         log_msg "WARNING: ipset $IPSET_NAME full ($ipset_entries/131072), some geo routes may be missing"
 
-    # --- Extract v2fly domains from downloaded database ---
-    local geo_v2fly=$(get_setting awg_geo_v2fly)
-    if [ -n "$geo_v2fly" ] && [ -f "$GEO_DIR/v2fly_all.yml" ]; then
-        rm -f "$GEO_DIR/domains/v2fly_"*.txt
-        for svc in $(echo "$geo_v2fly" | tr ',' ' '); do
-            svc=$(echo "$svc" | tr -d ' ')
+    # --- Select GeoSite domain lists from the cache (allow-domains) ---
+    local geosite_services=$(get_setting awg_geosite_services)
+    if [ -n "$geosite_services" ]; then
+        mkdir -p "$GEO_DIR/domains"
+        rm -f "$GEO_DIR/domains/geosite_"*.txt
+        for svc in $(echo "$geosite_services" | tr ',' ' '); do
+            svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
             [ -z "$svc" ] && continue
-            awk -v cat="$svc" '
-                /^  - name: / { name=$NF; found=(name==cat); next }
-                found && /^      - "domain:/ { sub(/.*"domain:/,""); sub(/".*/,""); print }
-                found && /^      - "full:/ { sub(/.*"full:/,""); sub(/".*/,""); print }
-                found && /^  - name: / { if(found) exit }
-            ' "$GEO_DIR/v2fly_all.yml" > "$GEO_DIR/domains/v2fly_${svc}.txt"
+            if [ -f "$GEO_DIR/services/${svc}.txt" ]; then
+                cp "$GEO_DIR/services/${svc}.txt" "$GEO_DIR/domains/geosite_${svc}.txt"
+            else
+                log_msg "WARNING: GeoSite list '$svc' not cached, click Update Now"
+            fi
         done
     fi
 
@@ -598,9 +617,22 @@ validate_uint(){
     return 0
 }
 
-validate_header(){
-    echo "$1" | grep -qE '^[0-9-]+$' || return 1
+# Accepts a single uint or a "min-max" range (start <= end). Used for H1-H4
+# and the AmneziaWG 3.0 timing/padding fields, which all share this syntax.
+# Ported from upstream r0otx@f7cd46a (PR #8, ayuckhulk/ranges-support-for-h1-h4).
+validate_range(){
+    echo "$1" | grep -qE '^[0-9]+(-[0-9]+)?$' || return 1
+    case "$1" in
+        *-*)
+            local start=${1%-*} end=${1#*-}
+            [ "$start" -le "$end" ] || return 1
+            ;;
+    esac
     return 0
+}
+
+validate_header(){
+    validate_range "$1"
 }
 
 validate_ip(){
@@ -626,6 +658,15 @@ generate_config(){
     local h2=$(get_setting awg_h2)
     local h3=$(get_setting awg_h3)
     local h4=$(get_setting awg_h4)
+
+    # --- AmneziaWG 3.0 (header protection) ---
+    local header_protection_key=$(get_setting awg_header_protection_key)
+    local content_padding=$(get_setting awg_content_padding)
+    local rekey_after=$(get_setting awg_rekey_after)
+    local rekey_timeout=$(get_setting awg_rekey_timeout)
+    local reject_after=$(get_setting awg_reject_after)
+    local keepalive_timeout=$(get_setting awg_keepalive_timeout)
+    local max_handshake_attempts=$(get_setting awg_max_handshake_attempts)
 
     # I1-I5 from base64-encoded setting
     local i1="" i2="" i3="" i4="" i5=""
@@ -664,6 +705,13 @@ generate_config(){
     [ -n "$h2" ] && { validate_header "$h2" || { log_msg "ERROR: Invalid H2: $h2"; return 1; }; }
     [ -n "$h3" ] && { validate_header "$h3" || { log_msg "ERROR: Invalid H3: $h3"; return 1; }; }
     [ -n "$h4" ] && { validate_header "$h4" || { log_msg "ERROR: Invalid H4: $h4"; return 1; }; }
+    [ -n "$header_protection_key" ] && { validate_wgkey "$header_protection_key" || return 1; }
+    [ -n "$content_padding" ] && { validate_range "$content_padding" || { log_msg "ERROR: Invalid ContentPaddingAddition: $content_padding"; return 1; }; }
+    [ -n "$rekey_after" ] && { validate_range "$rekey_after" || { log_msg "ERROR: Invalid RekeyAfterTime: $rekey_after"; return 1; }; }
+    [ -n "$rekey_timeout" ] && { validate_range "$rekey_timeout" || { log_msg "ERROR: Invalid RekeyTimeout: $rekey_timeout"; return 1; }; }
+    [ -n "$reject_after" ] && { validate_range "$reject_after" || { log_msg "ERROR: Invalid RejectAfterTime: $reject_after"; return 1; }; }
+    [ -n "$keepalive_timeout" ] && { validate_range "$keepalive_timeout" || { log_msg "ERROR: Invalid KeepaliveTimeout: $keepalive_timeout"; return 1; }; }
+    [ -n "$max_handshake_attempts" ] && { validate_range "$max_handshake_attempts" || { log_msg "ERROR: Invalid MaxHandshakeAttempts: $max_handshake_attempts"; return 1; }; }
 
     {
         echo "[Interface]"
@@ -685,6 +733,13 @@ generate_config(){
         [ -n "$i3" ] && echo "I3 = $i3"
         [ -n "$i4" ] && echo "I4 = $i4"
         [ -n "$i5" ] && echo "I5 = $i5"
+        [ -n "$header_protection_key" ] && echo "HeaderProtectionKey = $header_protection_key"
+        [ -n "$content_padding" ] && echo "ContentPaddingAddition = $content_padding"
+        [ -n "$rekey_after" ] && echo "RekeyAfterTime = $rekey_after"
+        [ -n "$rekey_timeout" ] && echo "RekeyTimeout = $rekey_timeout"
+        [ -n "$reject_after" ] && echo "RejectAfterTime = $reject_after"
+        [ -n "$keepalive_timeout" ] && echo "KeepaliveTimeout = $keepalive_timeout"
+        [ -n "$max_handshake_attempts" ] && echo "MaxHandshakeAttempts = $max_handshake_attempts"
         echo ""
         echo "[Peer]"
         echo "PublicKey = $peer_pubkey"
@@ -969,7 +1024,7 @@ do_install_page(){
     [ ! -f /jffs/scripts/services-start ] && echo "#!/bin/sh" > /jffs/scripts/services-start && chmod +x /jffs/scripts/services-start
     grep -q "amneziawg" /jffs/scripts/services-start || echo "/jffs/addons/amneziawg/amneziawg.sh mount_ui &" >> /jffs/scripts/services-start
 
-    [ -f "$GEO_DIR/v2fly_categories.txt" ] && cp "$GEO_DIR/v2fly_categories.txt" /www/user/v2fly_categories.htm 2>/dev/null
+    [ -f "$GEO_DIR/domain_categories.txt" ] && cp "$GEO_DIR/domain_categories.txt" /www/user/domain_categories.htm 2>/dev/null
 
     log_msg "Page installed: $am_webui_page"
     echo "Installed. Access: VPN > AmneziaWG"
@@ -987,7 +1042,7 @@ do_mount_ui(){
         mount_menu_tree "$am_webui_page"
     fi
 
-    [ -f "$GEO_DIR/v2fly_categories.txt" ] && cp "$GEO_DIR/v2fly_categories.txt" /www/user/v2fly_categories.htm 2>/dev/null
+    [ -f "$GEO_DIR/domain_categories.txt" ] && cp "$GEO_DIR/domain_categories.txt" /www/user/domain_categories.htm 2>/dev/null
     update_status
 
     if [ "$(get_setting awg_autostart)" = "1" ]; then
@@ -1006,7 +1061,7 @@ do_uninstall(){
 
     local page=$(ls /www/user/ 2>/dev/null | while read f; do grep -l "AmneziaWG" "/www/user/$f" 2>/dev/null; done | head -1)
     [ -n "$page" ] && rm -f "$page"
-    rm -f "$STATUS_FILE" /www/user/v2fly_categories.htm
+    rm -f "$STATUS_FILE" /www/user/domain_categories.htm
 
     rm -rf "$ADDON_DIR"
 
@@ -1045,7 +1100,7 @@ do_watchdog(){
 # --- Update check ---
 
 check_update(){
-    local repo="r0otx/asuswrt-merlin-amneziawg"
+    local repo="stxlvn/asuswrt-merlin-amneziawg"
     local latest
     latest=$(curl -sfL --connect-timeout 10 --max-time 15 "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v//;s/".*//')
     if [ -z "$latest" ]; then
@@ -1059,7 +1114,7 @@ check_update(){
 
 do_update(){
     log_msg "Updating AmneziaWG..."
-    local repo="r0otx/asuswrt-merlin-amneziawg"
+    local repo="stxlvn/asuswrt-merlin-amneziawg"
     local pkg_arch
     pkg_arch=$(opkg print-architecture 2>/dev/null | awk '$1=="arch" && $2!="all" {print $2}' | head -1)
     if [ -z "$pkg_arch" ]; then
@@ -1170,7 +1225,7 @@ do_service_event(){
             if ! geo_available; then
                 # Clear geo settings if databases not downloaded
                 local _cs_changed=false
-                for _gf in awg_geo_v2fly awg_geo_v2fly_ip awg_geo_custom_domains awg_geo_custom_ips; do
+                for _gf in awg_geosite_services awg_geoip_services awg_geo_custom_domains awg_geo_custom_ips; do
                     local _gv=$(get_setting "$_gf")
                     if [ -n "$_gv" ]; then
                         sed -i "/^${_gf} /d" "$SETTINGS"

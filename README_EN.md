@@ -28,13 +28,14 @@ Other aarch64 Merlin routers should also work.
 
 ## Features
 
-- **AmneziaWG protocol** -- WireGuard with DPI obfuscation (Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5)
+- **AmneziaWG 2.0 protocol** -- WireGuard with DPI obfuscation (Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5)
+- **AmneziaWG 3.0 protocol** -- header protection, content padding, randomized handshake timings (HeaderProtectionKey, ContentPaddingAddition, RekeyAfterTime, etc.), optional -- only set if your server supports it
 - **Userspace daemon** -- based on [amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go), no kernel module needed
 - **Web UI** -- ROG-styled addon page integrated into router admin panel (VPN > AmneziaWG)
-- **Config import** -- upload `.conf` file exported from Amnezia VPN client
+- **Config import** -- upload `.conf` file exported from Amnezia VPN client (2.0 and 3.0)
 - **Per-device routing** -- assign VPN policy per device: `VPN All`, `VPN Geo`, `Direct`
-- **GeoIP service routing** -- IP ranges for Telegram, Google, Netflix, Twitter, etc. via [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip)
-- **GeoSite domain routing** -- domain lists via [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) + dnsmasq ipset
+- **GeoIP service routing** -- IP ranges for Telegram, Discord, Meta, Cloudflare, etc. via [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains)
+- **GeoSite domain routing** -- domain lists via [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) + dnsmasq ipset
 - **Custom domains & IPs** -- manual domain and CIDR entries
 - **DNS interception** -- forces DNS through dnsmasq, blocks DoH/DoT for reliable geo routing
 - **MSS clamping** -- automatic TCP MSS fix for tunnel traffic
@@ -52,7 +53,7 @@ Other aarch64 Merlin routers should also work.
 ### Quick install (one command)
 
 ```shell
-curl -sfL https://raw.githubusercontent.com/r0otx/asuswrt-merlin-amneziawg/main/install-online.sh | sh
+curl -sfL https://raw.githubusercontent.com/stxlvn/asuswrt-merlin-amneziawg/main/install-online.sh | sh
 ```
 
 The script auto-detects router architecture, downloads the latest package from GitHub releases and installs it.
@@ -106,20 +107,20 @@ sh /tmp/install.sh
 
 ### GeoIP Service Lists
 
-Add service names (comma-separated) to route their IP ranges through VPN:
+Add service names (comma-separated) to route their IP ranges through VPN (list: [itdoginfo/allow-domains/Subnets/IPv4](https://github.com/itdoginfo/allow-domains/tree/main/Subnets/IPv4)):
 
 ```
-telegram,google,facebook,twitter,netflix,cloudflare
+cloudflare,cloudfront,digitalocean,discord,google_meet,hetzner,meta,ovh,roblox,telegram,twitter
 ```
 
 These are IP-based -- work without DNS, ideal for Telegram and other apps that connect by IP directly.
 
 ### GeoSite Service Lists
 
-Add service names for domain-based routing via dnsmasq:
+Add service names for domain-based routing via dnsmasq (list: [itdoginfo/allow-domains/Services](https://github.com/itdoginfo/allow-domains/tree/main/Services)):
 
 ```
-youtube,google,discord,netflix,spotify,instagram
+cloudflare,cloudfront,digitalocean,discord,google_ai,google_meet,google_play,hdrezka,hetzner,meta,ovh,roblox,telegram,tiktok,twitter,youtube
 ```
 
 Requires devices to use the router as DNS server. For iPhones: **Settings > Wi-Fi > (i) > DNS > Manual > router IP only**.
@@ -231,14 +232,13 @@ A: Add CIDR ranges in Custom IPs field, e.g. `149.154.160.0/20,91.108.4.0/22` fo
 ## Credits
 
 - [AmneziaWG](https://github.com/amnezia-vpn) -- protocol and implementations
-- [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip) -- GeoIP service CIDR lists
-- [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) -- domain lists
+- [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) -- domain and IP range lists per service
 - [Asuswrt-Merlin](https://www.asuswrt-merlin.net/) -- router firmware
 - [DanielLavrushin/asuswrt-merlin-xrayui](https://github.com/DanielLavrushin/asuswrt-merlin-xrayui) -- routing architecture reference
 
 ## Author
 
-**r0otx** -- [github.com/r0otx](https://github.com/r0otx)
+**stxlvn** -- [github.com/stxlvn](https://github.com/stxlvn)
 
 ## Disclaimer
 

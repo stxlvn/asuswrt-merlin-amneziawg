@@ -1,5 +1,5 @@
 # =============================================================
-# AmneziaWG client config for GT-AX11000
+# AmneziaWG client config for Asuswrt-Merlin (aarch64)
 # =============================================================
 # This file is used by: awg setconf awg0 /opt/amneziawg/awg0.conf
 #
@@ -27,11 +27,25 @@ Jmax = 70
 S1 = 20
 S2 = 30
 
-# Magic headers (must NOT overlap, 0-4294967295)
+# Magic headers (must NOT overlap, 0-4294967295). A single value or a
+# "min-max" range is accepted (ranges are common in configs exported by
+# newer Amnezia clients).
 H1 = 1234567891
 H2 = 1987654321
 H3 = 1112223334
 H4 = 4445556667
+
+# --- AmneziaWG 3.0 header protection (optional) ---
+# Only present if the server was set up with protocol 3.0. Leave all of
+# these out entirely for a 2.0-only server -- do not mix a v2 server with
+# v3 client fields, the handshake will simply fail.
+# HeaderProtectionKey = <BASE64_KEY_FROM_SERVER>
+# ContentPaddingAddition = 44-61
+# RekeyAfterTime = 104-121
+# RekeyTimeout = 5-8
+# RejectAfterTime = 151-185
+# KeepaliveTimeout = 9-16
+# MaxHandshakeAttempts = 16-21
 
 [Peer]
 PublicKey = <SERVER_PUBLIC_KEY>

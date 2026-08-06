@@ -34,13 +34,14 @@ VPN-клиент с обходом DPI-блокировок на базе [Amnez
 
 ## Возможности
 
-- **Протокол AmneziaWG** -- WireGuard с обфускацией DPI (Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5)
+- **Протокол AmneziaWG 2.0** -- WireGuard с обфускацией DPI (Jc, Jmin, Jmax, S1-S4, H1-H4, I1-I5)
+- **Протокол AmneziaWG 3.0** -- header protection, content padding, случайные тайминги хендшейка (HeaderProtectionKey, ContentPaddingAddition, RekeyAfterTime и др.), опционально -- задаётся только если сервер их поддерживает
 - **Userspace-демон** -- на базе [amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go), без kernel module
 - **Веб-интерфейс** -- страница-аддон в стиле ROG, встроенная в панель роутера (VPN > AmneziaWG)
-- **Импорт конфига** -- загрузка `.conf` файла из клиента Amnezia VPN
+- **Импорт конфига** -- загрузка `.conf` файла из клиента Amnezia VPN (2.0 и 3.0)
 - **Маршрутизация по устройствам** -- политика VPN для каждого устройства: `VPN All`, `VPN Geo`, `Direct`
-- **GeoIP по сервисам** -- IP-диапазоны Telegram, Google, Netflix, Twitter и др. через [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip)
-- **GeoSite по доменам** -- списки доменов через [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) + dnsmasq ipset
+- **GeoIP по сервисам** -- IP-диапазоны Telegram, Discord, Meta, Cloudflare и др. через [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains)
+- **GeoSite по доменам** -- списки доменов через [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) + dnsmasq ipset
 - **Свои домены и IP** -- ручное добавление доменов и CIDR-подсетей
 - **Перехват DNS** -- принудительный DNS через dnsmasq, блокировка DoH/DoT для надёжной гео-маршрутизации
 - **MSS clamping** -- автоматическое исправление TCP MSS для туннельного трафика
@@ -58,7 +59,7 @@ VPN-клиент с обходом DPI-блокировок на базе [Amnez
 ### Быстрая установка (одна команда)
 
 ```shell
-curl -sfL https://raw.githubusercontent.com/r0otx/asuswrt-merlin-amneziawg/main/install-online.sh | sh
+curl -sfL https://raw.githubusercontent.com/stxlvn/asuswrt-merlin-amneziawg/main/install-online.sh | sh
 ```
 
 Скрипт автоматически определит архитектуру роутера, скачает нужный пакет из последнего релиза и установит.
@@ -112,20 +113,20 @@ sh /tmp/install.sh
 
 ### GeoIP Service Lists
 
-Введите имена сервисов через запятую для маршрутизации их IP-диапазонов через VPN:
+Введите имена сервисов через запятую для маршрутизации их IP-диапазонов через VPN (список: [itdoginfo/allow-domains/Subnets/IPv4](https://github.com/itdoginfo/allow-domains/tree/main/Subnets/IPv4)):
 
 ```
-telegram,google,facebook,twitter,netflix,cloudflare
+cloudflare,cloudfront,digitalocean,discord,google_meet,hetzner,meta,ovh,roblox,telegram,twitter
 ```
 
 Работают по IP -- не зависят от DNS, идеальны для Telegram и других приложений, которые подключаются напрямую по IP.
 
 ### GeoSite Service Lists
 
-Введите имена сервисов для маршрутизации по доменам через dnsmasq:
+Введите имена сервисов для маршрутизации по доменам через dnsmasq (список: [itdoginfo/allow-domains/Services](https://github.com/itdoginfo/allow-domains/tree/main/Services)):
 
 ```
-youtube,google,discord,netflix,spotify,instagram
+cloudflare,cloudfront,digitalocean,discord,google_ai,google_meet,google_play,hdrezka,hetzner,meta,ovh,roblox,telegram,tiktok,twitter,youtube
 ```
 
 Требует чтобы устройства использовали роутер как DNS-сервер. Для iPhone: **Настройки > Wi-Fi > (i) > DNS > Вручную > только IP роутера**.
@@ -243,13 +244,12 @@ opkg remove amneziawg
 
 ## Автор
 
-**r0otx** -- [github.com/r0otx](https://github.com/r0otx)
+**stxlvn** -- [github.com/stxlvn](https://github.com/stxlvn)
 
 ## Благодарности
 
 - [AmneziaWG](https://github.com/amnezia-vpn) -- протокол и реализации
-- [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip) -- GeoIP CIDR-списки сервисов
-- [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community) -- доменные списки
+- [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) -- списки доменов и IP-диапазонов сервисов
 - [Asuswrt-Merlin](https://www.asuswrt-merlin.net/) -- прошивка роутера
 - [DanielLavrushin/asuswrt-merlin-xrayui](https://github.com/DanielLavrushin/asuswrt-merlin-xrayui) -- референс архитектуры маршрутизации
 

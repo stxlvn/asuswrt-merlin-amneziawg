@@ -98,17 +98,17 @@
 <script>
 var custom_settings = <% get_custom_settings(); %>;
 var statusTimer = null;
-var v2flyList = [];
-var v2flyIpList = ['telegram','google','facebook','twitter','netflix','cloudflare','fastly','cloudfront'];
+var geoSiteList = [];
+var geoIpList = ['cloudflare','cloudfront','digitalocean','discord','google_meet','hetzner','meta','ovh','roblox','telegram','twitter'];
 function escHtml(s){
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-function loadV2flyCategories(){
+function loadGeoSiteCategories(){
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/user/v2fly_categories.htm?_=' + Date.now(), true);
+    xhr.open('GET', '/user/domain_categories.htm?_=' + Date.now(), true);
     xhr.onload = function(){
         if(xhr.status === 200 && xhr.responseText.length > 0){
-            v2flyList = xhr.responseText.trim().split('\n').filter(function(s){ return s; });
+            geoSiteList = xhr.responseText.trim().split('\n').filter(function(s){ return s; });
         }
     };
     xhr.send();
@@ -119,7 +119,7 @@ function initial(){
     loadSettings();
     refreshStatus();
     statusTimer = setInterval(refreshStatus, 5000);
-    loadV2flyCategories();
+    loadGeoSiteCategories();
     initAutocomplete();
     initAutocompleteIp();
     checkForUpdate();
@@ -128,7 +128,7 @@ function initial(){
 function checkForUpdate(){
     // Check GitHub directly from browser (no backend needed)
     var xhr = new XMLHttpRequest();
-    xhr.open('GET', 'https://api.github.com/repos/r0otx/asuswrt-merlin-amneziawg/releases/latest', true);
+    xhr.open('GET', 'https://api.github.com/repos/stxlvn/asuswrt-merlin-amneziawg/releases/latest', true);
     xhr.timeout = 10000;
     xhr.onload = function(){
         if(xhr.status !== 200) return;
@@ -206,7 +206,10 @@ function loadSettings(){
         'awg_peer_allowedips', 'awg_peer_keepalive',
         'awg_jc', 'awg_jmin', 'awg_jmax',
         'awg_s1', 'awg_s2', 'awg_s3', 'awg_s4',
-        'awg_h1', 'awg_h2', 'awg_h3', 'awg_h4'
+        'awg_h1', 'awg_h2', 'awg_h3', 'awg_h4',
+        'awg_header_protection_key', 'awg_content_padding',
+        'awg_rekey_after', 'awg_rekey_timeout', 'awg_reject_after',
+        'awg_keepalive_timeout', 'awg_max_handshake_attempts'
     ];
     for(var i = 0; i < fields.length; i++){
         var el = document.getElementById(fields[i]);
@@ -249,7 +252,10 @@ function saveSettings(){
         'awg_peer_allowedips', 'awg_peer_keepalive',
         'awg_jc', 'awg_jmin', 'awg_jmax',
         'awg_s1', 'awg_s2', 'awg_s3', 'awg_s4',
-        'awg_h1', 'awg_h2', 'awg_h3', 'awg_h4'
+        'awg_h1', 'awg_h2', 'awg_h3', 'awg_h4',
+        'awg_header_protection_key', 'awg_content_padding',
+        'awg_rekey_after', 'awg_rekey_timeout', 'awg_reject_after',
+        'awg_keepalive_timeout', 'awg_max_handshake_attempts'
     ];
     for(var i = 0; i < fields.length; i++){
         var el = document.getElementById(fields[i]);
@@ -275,8 +281,8 @@ function saveSettings(){
     custom_settings.awg_initdata = initData ? btoa(initData) : '';
 
     // Save geo settings
-    custom_settings.awg_geo_v2fly = document.getElementById('awg_geo_v2fly').value;
-    custom_settings.awg_geo_v2fly_ip = document.getElementById('awg_geo_v2fly_ip').value;
+    custom_settings.awg_geosite_services = document.getElementById('awg_geosite_services').value;
+    custom_settings.awg_geoip_services = document.getElementById('awg_geoip_services').value;
     custom_settings.awg_geo_custom_domains = document.getElementById('geo_custom_domains').value;
     custom_settings.awg_geo_custom_ips = document.getElementById('geo_custom_ips').value;
     custom_settings.awg_geo_autoupdate = document.getElementById('geo_autoupdate').checked ? '1' : '0';
@@ -291,6 +297,11 @@ function saveSettings(){
     }
     if(pk.length !== 44 || pubk.length !== 44){
         alert('Invalid key format. Keys must be 44 characters (base64).');
+        return;
+    }
+    var hpk = document.getElementById('awg_header_protection_key').value;
+    if(hpk && hpk.length !== 44){
+        alert('Invalid Header Protection Key format. Keys must be 44 characters (base64).');
         return;
     }
     if(ep.indexOf(':') === -1){
@@ -365,10 +376,10 @@ function updateGeoVisibility(){
 // === GeoIP / GeoSite ===
 
 function loadGeoSettings(){
-    var v2fly = document.getElementById('awg_geo_v2fly');
-    if(v2fly) v2fly.value = custom_settings.awg_geo_v2fly || '';
-    var v2flyIp = document.getElementById('awg_geo_v2fly_ip');
-    if(v2flyIp) v2flyIp.value = custom_settings.awg_geo_v2fly_ip || '';
+    var geosite = document.getElementById('awg_geosite_services');
+    if(geosite) geosite.value = custom_settings.awg_geosite_services || '';
+    var geoip = document.getElementById('awg_geoip_services');
+    if(geoip) geoip.value = custom_settings.awg_geoip_services || '';
     // Custom
     var cd = document.getElementById('geo_custom_domains');
     if(cd) cd.value = custom_settings.awg_geo_custom_domains || '';
@@ -710,6 +721,13 @@ function parseConfig(text){
                 case 'I3': setVal('awg_i3', val); break;
                 case 'I4': setVal('awg_i4', val); break;
                 case 'I5': setVal('awg_i5', val); break;
+                case 'HeaderProtectionKey':    setVal('awg_header_protection_key', val); break;
+                case 'ContentPaddingAddition': setVal('awg_content_padding', val); break;
+                case 'RekeyAfterTime':         setVal('awg_rekey_after', val); break;
+                case 'RekeyTimeout':           setVal('awg_rekey_timeout', val); break;
+                case 'RejectAfterTime':        setVal('awg_reject_after', val); break;
+                case 'KeepaliveTimeout':       setVal('awg_keepalive_timeout', val); break;
+                case 'MaxHandshakeAttempts':   setVal('awg_max_handshake_attempts', val); break;
             }
         } else if(section === 'peer'){
             switch(key){
@@ -730,7 +748,7 @@ function setVal(id, val){
 }
 
 function initAutocomplete(){
-    var input = document.getElementById('awg_geo_v2fly');
+    var input = document.getElementById('awg_geosite_services');
     if(!input) return;
     var wrap = document.createElement('div');
     wrap.className = 'awg-ac-wrap';
@@ -758,7 +776,7 @@ function initAutocomplete(){
         list.innerHTML = '';
         selIdx = -1;
         if(q.length < 1){ list.style.display = 'none'; return; }
-        var matches = v2flyList.filter(function(s){
+        var matches = geoSiteList.filter(function(s){
             return s.indexOf(q) !== -1 && existing.indexOf(s) === -1;
         }).slice(0, 15);
         if(matches.length === 0){ list.style.display = 'none'; return; }
@@ -794,7 +812,7 @@ function initAutocomplete(){
 }
 
 function initAutocompleteIp(){
-    var input = document.getElementById('awg_geo_v2fly_ip');
+    var input = document.getElementById('awg_geoip_services');
     if(!input) return;
     var wrap = document.createElement('div');
     wrap.className = 'awg-ac-wrap';
@@ -819,7 +837,7 @@ function initAutocompleteIp(){
         list.innerHTML = '';
         selIdx = -1;
         if(q.length < 1){ list.style.display = 'none'; return; }
-        var matches = v2flyIpList.filter(function(s){
+        var matches = geoIpList.filter(function(s){
             return s.indexOf(q) !== -1 && existing.indexOf(s) === -1;
         }).slice(0, 15);
         if(matches.length === 0){ list.style.display = 'none'; return; }
@@ -1047,6 +1065,39 @@ function initAutocompleteIp(){
                 </tr>
                 </table>
 
+                <!-- ==================== AMNEZIAWG 3.0 ==================== -->
+                <table width="100%" border="1" cellpadding="4" cellspacing="0" class="FormTable" style="margin-top:8px;">
+                <thead><tr><td colspan="2">AmneziaWG 3.0 (Header Protection) <span style="font-weight:normal; font-size:11px; color:#888;">optional, leave empty for 2.0-only servers</span></td></tr></thead>
+                <tr>
+                    <th width="35%">Header Protection Key</th>
+                    <td><input type="password" class="input_32_table" id="awg_header_protection_key" maxlength="64" autocomplete="off" placeholder="Auto-filled by Import Config"></td>
+                </tr>
+                <tr>
+                    <th>Content Padding Addition</th>
+                    <td><input type="text" class="input_25_table" id="awg_content_padding" maxlength="16" placeholder="44-61"> bytes</td>
+                </tr>
+                <tr>
+                    <th>Rekey After Time</th>
+                    <td><input type="text" class="input_25_table" id="awg_rekey_after" maxlength="16" placeholder="104-121"> sec</td>
+                </tr>
+                <tr>
+                    <th>Rekey Timeout</th>
+                    <td><input type="text" class="input_25_table" id="awg_rekey_timeout" maxlength="16" placeholder="5-8"> sec</td>
+                </tr>
+                <tr>
+                    <th>Reject After Time</th>
+                    <td><input type="text" class="input_25_table" id="awg_reject_after" maxlength="16" placeholder="151-185"> sec</td>
+                </tr>
+                <tr>
+                    <th>Keepalive Timeout</th>
+                    <td><input type="text" class="input_25_table" id="awg_keepalive_timeout" maxlength="16" placeholder="9-16"> sec</td>
+                </tr>
+                <tr>
+                    <th>Max Handshake Attempts</th>
+                    <td><input type="text" class="input_25_table" id="awg_max_handshake_attempts" maxlength="16" placeholder="16-21"></td>
+                </tr>
+                </table>
+
                 <!-- ==================== ROUTING ==================== -->
                 <table width="100%" border="1" cellpadding="4" cellspacing="0" class="FormTable" style="margin-top:8px;">
                 <thead><tr><td colspan="2">Routing Policy</td></tr></thead>
@@ -1093,11 +1144,11 @@ function initAutocompleteIp(){
                 <table width="100%" border="1" cellpadding="4" cellspacing="0" class="FormTable" style="margin-top:8px;">
                 <thead><tr><td colspan="2">GeoIP — Route by Service IP</td></tr></thead>
                 <tr>
-                    <th width="35%">GeoIP Service Lists<br><span style="font-weight:normal; font-size:11px; color:#888;">github.com/Loyalsoldier/geoip</span></th>
+                    <th width="35%">GeoIP Service Lists<br><span style="font-weight:normal; font-size:11px; color:#888;">github.com/itdoginfo/allow-domains</span></th>
                     <td>
-                        <input type="text" class="input_32_table" id="awg_geo_v2fly_ip" style="width:95%;" maxlength="512"
-                            placeholder="telegram,google,facebook,twitter,netflix,cloudflare">
-                        <br><span style="color:#888; font-size:11px;">Comma-separated. IP ranges for services: telegram, google, facebook, twitter, netflix, cloudflare, apple, amazon, microsoft, github, stripe, openai ...</span>
+                        <input type="text" class="input_32_table" id="awg_geoip_services" style="width:95%;" maxlength="512"
+                            placeholder="telegram,discord,meta,twitter,cloudflare">
+                        <br><span style="color:#888; font-size:11px;">Comma-separated. IP ranges for services: cloudflare, cloudfront, digitalocean, discord, google_meet, hetzner, meta, ovh, roblox, telegram, twitter</span>
                         <div style="color:#666; font-size:11px; margin-top:3px;">Works without DNS — direct IP matching. Ideal for Telegram, messengers, etc.</div>
                     </td>
                 </tr>
@@ -1106,11 +1157,11 @@ function initAutocompleteIp(){
                 <table width="100%" border="1" cellpadding="4" cellspacing="0" class="FormTable" style="margin-top:8px;">
                 <thead><tr><td colspan="2">GeoSite — Route by Service / Domain</td></tr></thead>
                 <tr>
-                    <th width="35%">GeoSite Service Lists<br><span style="font-weight:normal; font-size:11px; color:#888;">github.com/v2fly/domain-list-community</span></th>
+                    <th width="35%">GeoSite Service Lists<br><span style="font-weight:normal; font-size:11px; color:#888;">github.com/itdoginfo/allow-domains</span></th>
                     <td>
-                        <input type="text" class="input_32_table" id="awg_geo_v2fly" style="width:95%;" maxlength="512"
-                            placeholder="youtube,google,discord,netflix,telegram,twitter,instagram,facebook,tiktok,spotify">
-                        <br><span style="color:#888; font-size:11px;">Comma-separated. 1400+ lists: youtube, google, discord, netflix, telegram, twitter, instagram, facebook, tiktok, spotify, steam, apple, microsoft, amazon, openai, github, whatsapp, category-media, category-games, category-dev ...</span>
+                        <input type="text" class="input_32_table" id="awg_geosite_services" style="width:95%;" maxlength="512"
+                            placeholder="youtube,discord,telegram,twitter,tiktok">
+                        <br><span style="color:#888; font-size:11px;">Comma-separated: cloudflare, cloudfront, digitalocean, discord, google_ai, google_meet, google_play, hdrezka, hetzner, meta, ovh, roblox, telegram, tiktok, twitter, youtube</span>
                     </td>
                 </tr>
                 <tr>
@@ -1150,7 +1201,7 @@ function initAutocompleteIp(){
                 <div class="awg-section" style="margin-top:15px;">Log</div>
                 <div id="awg_log" class="awg-log">Waiting for data...</div>
                 <div style="text-align:right; font-size:11px; opacity:0.5; margin-top:4px;">
-                    <a href="https://github.com/r0otx/asuswrt-merlin-amneziawg" target="_blank" style="text-decoration:none;">&copy; r0otx</a>
+                    <a href="https://github.com/stxlvn/asuswrt-merlin-amneziawg" target="_blank" style="text-decoration:none;">&copy; stxlvn</a>
                 </div>
 
             </td></tr>

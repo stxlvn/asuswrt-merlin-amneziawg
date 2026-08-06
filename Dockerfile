@@ -90,7 +90,7 @@ RUN cd amneziawg-linux-kernel-module/src && \
 # =============================================================
 # 5. Build AmneziaWG tools (awg — аналог wg)
 # =============================================================
-RUN git clone --depth 1 --branch v1.0.20260223 \
+RUN git clone --depth 1 --branch v3.0.20260805 \
         https://github.com/amnezia-vpn/amneziawg-tools.git
 
 RUN cd amneziawg-tools/src && \
