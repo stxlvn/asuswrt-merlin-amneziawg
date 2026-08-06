@@ -79,7 +79,9 @@ IPK_FILE=$(basename "$IPK_URL")
 echo "Package: $IPK_FILE"
 
 # Download
-TMP_DIR=$(mktemp -d /tmp/amneziawg_install.XXXXXX) || { echo "ERROR: Cannot create temp directory"; exit 1; }
+# Not using mktemp: some BusyBox/Entware setups on the router don't ship it.
+TMP_DIR="/tmp/amneziawg_install.$$"
+mkdir -p "$TMP_DIR" || { echo "ERROR: Cannot create temp directory"; exit 1; }
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 echo "Downloading..."
 if ! curl -sfL --connect-timeout 10 --max-time 120 "$IPK_URL" -o "$TMP_DIR/$IPK_FILE"; then
