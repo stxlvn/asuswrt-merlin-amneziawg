@@ -244,7 +244,9 @@ opkg remove amneziawg
 
 ## Автор
 
-**stxlvn** -- [github.com/stxlvn](https://github.com/stxlvn)
+**Vadim Paramonov ([r0otx](https://github.com/r0otx))** -- оригинальный автор и разработчик проекта.
+
+Этот репозиторий -- форк/продолжение, поддерживается [stxlvn](https://github.com/stxlvn) (AmneziaWG 3.0, смена источника гео-списков и другие доработки).
 
 ## Благодарности
 

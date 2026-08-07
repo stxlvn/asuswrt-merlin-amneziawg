@@ -238,7 +238,9 @@ A: Add CIDR ranges in Custom IPs field, e.g. `149.154.160.0/20,91.108.4.0/22` fo
 
 ## Author
 
-**stxlvn** -- [github.com/stxlvn](https://github.com/stxlvn)
+**Vadim Paramonov ([r0otx](https://github.com/r0otx))** -- original author and developer of this project.
+
+This repository is a fork/continuation, maintained by [stxlvn](https://github.com/stxlvn) (AmneziaWG 3.0 support, geo list source switch, and other changes).
 
 ## Disclaimer
 
