@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.3"
+AWG_VERSION="1.3.4"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -169,12 +169,17 @@ download_geoip_service(){
     svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
     [ -z "$svc" ] && return 1
     local tmp="$GEO_DIR/geoip/.dl_${svc}.tmp"
-    if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/Subnets/IPv4/${svc}.lst" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
-        grep -v ":" "$tmp" > "$GEO_DIR/geoip/${svc}.cidr"
-        rm -f "$tmp"
-        [ -s "$GEO_DIR/geoip/${svc}.cidr" ] || { rm -f "$GEO_DIR/geoip/${svc}.cidr"; return 1; }
-        return 0
-    fi
+    local attempt=0
+    while [ $attempt -lt 2 ]; do
+        attempt=$((attempt + 1))
+        if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/Subnets/IPv4/${svc}.lst" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+            grep -v ":" "$tmp" > "$GEO_DIR/geoip/${svc}.cidr"
+            rm -f "$tmp"
+            [ -s "$GEO_DIR/geoip/${svc}.cidr" ] || { rm -f "$GEO_DIR/geoip/${svc}.cidr"; return 1; }
+            return 0
+        fi
+        [ $attempt -lt 2 ] && sleep 2
+    done
     rm -f "$tmp"
     return 1
 }
@@ -203,10 +208,15 @@ download_geosite_service(){
     local list_path
     list_path=$(geosite_list_path "$svc")
     local tmp="$GEO_DIR/services/.dl_${svc}.tmp"
-    if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/${list_path}" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
-        mv "$tmp" "$GEO_DIR/services/${svc}.txt"
-        return 0
-    fi
+    local attempt=0
+    while [ $attempt -lt 2 ]; do
+        attempt=$((attempt + 1))
+        if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/${list_path}" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+            mv "$tmp" "$GEO_DIR/services/${svc}.txt"
+            return 0
+        fi
+        [ $attempt -lt 2 ] && sleep 2
+    done
     rm -f "$tmp"
     return 1
 }
