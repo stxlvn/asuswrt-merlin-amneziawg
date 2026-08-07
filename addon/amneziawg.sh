@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.2"
+AWG_VERSION="1.4.3"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -259,10 +259,13 @@ download_all_geo(){
             log_msg "WARNING: GeoIP $svc failed"
         fi
         update_status
-        # Pace requests to raw.githubusercontent.com -- back-to-back with no
-        # delay across ~35 files trips rate limiting/connection resets on
-        # some networks, especially the tail of the batch.
-        sleep 1
+        # Pace requests to raw.githubusercontent.com. A single standalone
+        # curl to a "failed" file always succeeds -- the file is fine, and
+        # it's not a block -- so this isn't a per-file problem. It only
+        # shows up as an occasional real 404 inside this tight back-to-back
+        # loop across ~36 files, which looks like Fastly's anycast routing
+        # being inconsistent under rapid repeated requests to the same host.
+        sleep 2
     done
     log_msg "GeoIP: $ok/$total service lists downloaded"
 
@@ -282,7 +285,7 @@ download_all_geo(){
             log_msg "WARNING: GeoSite $svc failed"
         fi
         update_status
-        sleep 1
+        sleep 2
     done
     echo "$GEOSITE_SERVICES" | tr ' ' '\n' | sort > "$GEO_DIR/domain_categories.txt"
     cp "$GEO_DIR/domain_categories.txt" /www/user/domain_categories.htm 2>/dev/null
@@ -476,6 +479,11 @@ setup_firewall(){
     ipset_err=$(ipset create "$IPSET_NAME" hash:net family inet hashsize 4096 maxelem 131072 timeout 86400 2>&1)
     if ! ipset list "$IPSET_NAME" >/dev/null 2>&1; then
         log_msg "ERROR: ipset $IPSET_NAME creation failed, geo routing disabled: ${ipset_err:-no output}"
+        case "$ipset_err" in
+            *LIBIPSET_*|*"version \`"*)
+                log_msg "HINT: ipset/libipset version mismatch -- try: opkg install --force-reinstall ipset libipset"
+                ;;
+        esac
         has_geo=false
     fi
 
