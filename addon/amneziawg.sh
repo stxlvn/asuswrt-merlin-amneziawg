@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.8"
+AWG_VERSION="1.3.9"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -770,10 +770,26 @@ generate_config(){
         if [ "$clean_initdata" != "$initdata" ]; then
             log_msg "initdata contained non-base64 characters, stripped before decoding (len ${#initdata} -> ${#clean_initdata})"
         fi
+        # `coreutils-base64`'s real binary is /opt/libexec/base64-coreutils;
+        # opkg is supposed to symlink it onto PATH as /opt/bin/base64 via its
+        # "Alternatives" control field, but older/lighter opkg builds (e.g.
+        # a plain opkg-cl without alternatives support) silently ignore that
+        # field, so the package installs "successfully" while `base64` never
+        # actually becomes runnable. Repair the symlink ourselves if we can,
+        # and try the libexec binary directly regardless.
+        if [ -x /opt/libexec/base64-coreutils ] && [ ! -e /opt/bin/base64 ]; then
+            ln -sf /opt/libexec/base64-coreutils /opt/bin/base64 2>/dev/null && \
+                log_msg "Repaired missing /opt/bin/base64 -> /opt/libexec/base64-coreutils symlink"
+        fi
+        local decoded=""
+        for _b64 in base64 /opt/libexec/base64-coreutils; do
+            command -v "$_b64" >/dev/null 2>&1 || [ -x "$_b64" ] || continue
+            decoded=$(echo "$clean_initdata" | "$_b64" -d -i 2>/dev/null)
+            [ -z "$decoded" ] && decoded=$(echo "$clean_initdata" | "$_b64" -d 2>/dev/null)
+            [ -n "$decoded" ] && break
+        done
         # Ported from advocdiaboly/asuswrt-merlin-amneziawg@fbf595e (Dmitry Fomin):
         # fall back to openssl if base64 isn't on PATH (varies across Merlin/Entware builds).
-        local decoded=""
-        command -v base64 >/dev/null 2>&1 && decoded=$(echo "$clean_initdata" | base64 -d -i 2>/dev/null || echo "$clean_initdata" | base64 -d 2>/dev/null)
         if [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1; then
             decoded=$(echo "$clean_initdata" | openssl enc -base64 -d -A 2>/dev/null)
         fi
@@ -785,12 +801,13 @@ generate_config(){
         if [ -z "$decoded" ] && command -v busybox >/dev/null 2>&1; then
             decoded=$(echo "$clean_initdata" | busybox base64 -d 2>/dev/null)
         fi
-        # Self-heal once per boot if postinst's auto-install didn't take (e.g.
-        # network wasn't up yet during opkg install). This attempt is logged,
-        # unlike postinst's -- whose stdout only appears in the interactive
-        # opkg session, not in the persistent log.
+        # Self-heal once per boot if nothing above worked (e.g. neither
+        # coreutils-base64 nor openssl-util is installed at all yet). This
+        # attempt is logged, unlike postinst's old attempt (removed in
+        # v1.3.6) -- whose stdout only ever reached the interactive opkg
+        # session, never the persistent log.
         if [ -z "$decoded" ] && [ -f /tmp/.awg_base64_install_tried ]; then
-            log_msg "base64 decoder still unavailable (auto-install already attempted this boot -- reboot or run 'opkg install coreutils-base64' manually to retry)"
+            log_msg "base64 decoder still unavailable (auto-install already attempted this boot -- reboot or run 'opkg install openssl-util' manually to retry)"
         elif [ -z "$decoded" ]; then
             # `opkg` itself may be a shell function/alias defined only in an
             # interactive login profile (not inherited by this non-
@@ -807,14 +824,23 @@ generate_config(){
             fi
             if [ -n "$opkg_bin" ]; then
                 touch /tmp/.awg_base64_install_tried
-                log_msg "No base64 decoder available, attempting: $opkg_bin install coreutils-base64"
-                if "$opkg_bin" install coreutils-base64 >/dev/null 2>&1 || "$opkg_bin" install openssl-util >/dev/null 2>&1; then
-                    log_msg "base64 decoder installed, retrying I1-I5 decode"
-                    command -v base64 >/dev/null 2>&1 && decoded=$(echo "$clean_initdata" | base64 -d -i 2>/dev/null || echo "$clean_initdata" | base64 -d 2>/dev/null)
-                    [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1 && \
-                        decoded=$(echo "$clean_initdata" | openssl enc -base64 -d -A 2>/dev/null)
+                # openssl-util installs a plain /opt/bin/openssl with no
+                # Alternatives indirection, so prefer it over
+                # coreutils-base64 -- more likely to actually end up runnable.
+                log_msg "No base64 decoder available, attempting: $opkg_bin install openssl-util"
+                if "$opkg_bin" install openssl-util >/dev/null 2>&1 || "$opkg_bin" install coreutils-base64 >/dev/null 2>&1; then
+                    log_msg "decoder package installed, retrying I1-I5 decode"
+                    [ -x /opt/libexec/base64-coreutils ] && [ ! -e /opt/bin/base64 ] && \
+                        ln -sf /opt/libexec/base64-coreutils /opt/bin/base64 2>/dev/null
+                    command -v openssl >/dev/null 2>&1 && decoded=$(echo "$clean_initdata" | openssl enc -base64 -d -A 2>/dev/null)
+                    for _b64 in base64 /opt/libexec/base64-coreutils; do
+                        [ -n "$decoded" ] && break
+                        command -v "$_b64" >/dev/null 2>&1 || [ -x "$_b64" ] || continue
+                        decoded=$(echo "$clean_initdata" | "$_b64" -d -i 2>/dev/null)
+                        [ -z "$decoded" ] && decoded=$(echo "$clean_initdata" | "$_b64" -d 2>/dev/null)
+                    done
                 else
-                    log_msg "ERROR: $opkg_bin install coreutils-base64/openssl-util failed -- check internet/opkg feed"
+                    log_msg "ERROR: $opkg_bin install openssl-util/coreutils-base64 failed -- check internet/opkg feed"
                 fi
             else
                 log_msg "ERROR: opkg/opkg-cl not found (PATH=$PATH), cannot auto-install a base64 decoder"
@@ -827,7 +853,7 @@ generate_config(){
             i4=$(echo "$decoded" | awk '/^I4 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
             i5=$(echo "$decoded" | awk '/^I5 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
         else
-            log_msg "ERROR: Failed to decode I1-I5 initdata (tried base64, openssl, busybox base64 -- len=${#initdata} clean_len=${#clean_initdata} prefix='$(echo "$clean_initdata" | cut -c1-12)...')"
+            log_msg "ERROR: Failed to decode I1-I5 initdata (tried base64, /opt/libexec/base64-coreutils, openssl, busybox base64 -- len=${#initdata} clean_len=${#clean_initdata} prefix='$(echo "$clean_initdata" | cut -c1-12)...')"
         fi
     fi
 
