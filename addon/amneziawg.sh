@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.0"
+AWG_VERSION="1.4.1"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -461,9 +461,10 @@ setup_firewall(){
     local has_geo=false
 
     # --- Create ipset ---
-    ipset create "$IPSET_NAME" hash:net family inet hashsize 4096 maxelem 131072 timeout 86400 2>/dev/null
+    local ipset_err
+    ipset_err=$(ipset create "$IPSET_NAME" hash:net family inet hashsize 4096 maxelem 131072 timeout 86400 2>&1)
     if ! ipset list "$IPSET_NAME" >/dev/null 2>&1; then
-        log_msg "ERROR: ipset $IPSET_NAME creation failed, geo routing disabled"
+        log_msg "ERROR: ipset $IPSET_NAME creation failed, geo routing disabled: ${ipset_err:-no output}"
         has_geo=false
     fi
 
@@ -1012,7 +1013,12 @@ do_start(){
     log_msg "Userspace daemon started"
 
     # Configure interface
-    "$AWG_BIN" setconf "$IFACE" "$CONF" || { log_msg "ERROR: setconf failed"; ip link del "$IFACE" 2>/dev/null; update_status; release_lock; return 1; }
+    local setconf_err
+    setconf_err=$("$AWG_BIN" setconf "$IFACE" "$CONF" 2>&1)
+    if [ $? -ne 0 ]; then
+        log_msg "ERROR: setconf failed: ${setconf_err:-no output}"
+        ip link del "$IFACE" 2>/dev/null; update_status; release_lock; return 1
+    fi
 
     [ -f "$AWG_DIR/awg0.addr" ] && ip addr add "$(cat "$AWG_DIR/awg0.addr")" dev "$IFACE"
     ip link set "$IFACE" mtu 1280
