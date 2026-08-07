@@ -30,6 +30,13 @@ Two independent binaries are cross-compiled and shipped per architecture:
   CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 go build -ldflags="-s -w" -o amneziawg-go-arm5  # armv7-2.6
   CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o amneziawg-go-arm   # armv7-3.2
   ```
+  Optional, for the lower-RAM models in the support list (256-512MB): bound amneziawg-go's
+  buffer pools before building, then launch the daemon with `GOMEMLIMIT=320MiB GOGC=20` (already
+  done in `do_start`) -- otherwise the pools grow unbounded under sustained high-throughput
+  traffic. Ported from advocdiaboly/asuswrt-merlin-amneziawg@ea58f06 (Dmitry Fomin):
+  ```bash
+  sed -i 's/PreallocatedBuffersPerPool = 0/PreallocatedBuffersPerPool = 1024/' device/queueconstants_default.go
+  ```
 - `awg` (amneziawg-tools CLI) -- C, needs a matching cross toolchain per arch. Its Makefile does
   **not** depend on kernel headers/config at all (that's only relevant for a kernel-module build,
   which this project does not use) -- only a working `CC`/`LD`/`AR` and libc:

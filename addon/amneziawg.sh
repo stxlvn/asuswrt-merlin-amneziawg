@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.2.0"
+AWG_VERSION="1.3.0"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -19,6 +19,7 @@ IPSET_NAME="awg_dst"
 FWMARK="0x100"
 DNSMASQ_AWG_CONF="$AWG_DIR/dnsmasq_awg.conf"
 DNSMASQ_INCLUDE="/jffs/configs/dnsmasq.conf.add"
+DNSMASQ_ACTIVE_CONF="/tmp/etc/dnsmasq.conf"
 SCRIPT_NAME="amneziawg"
 RT_TABLE=300
 AWG_CHAIN="AWG"
@@ -337,6 +338,55 @@ cleanup_firewall(){
     log_msg "Firewall rules cleaned"
 }
 
+# Pre-resolve domains from the generated dnsmasq config to populate the ipset
+# immediately, instead of waiting for real client traffic to trigger it.
+pre_resolve_domains(){
+    [ -f "$DNSMASQ_AWG_CONF" ] || return 0
+    log_msg "Pre-resolving domains to populate ipset..."
+    local bg_count=0
+    awk -F/ '/^ipset=/{for(i=2;i<NF;i++)print $i}' "$DNSMASQ_AWG_CONF" | while read -r domain; do
+        [ -z "$domain" ] && continue
+        nslookup "$domain" 127.0.0.1 >/dev/null 2>&1 &
+        bg_count=$((bg_count + 1))
+        [ $bg_count -ge 10 ] && { wait; bg_count=0; }
+    done
+    wait
+    log_msg "Pre-resolution finished"
+}
+
+# Merlin's own services (opkg hooks, network/wan events, etc.) can trigger a
+# concurrent "service restart_dnsmasq" via nvram rc_service; if ours lands in
+# the middle of that it's silently dropped and our conf-file include never
+# takes effect. Wait for rc_service to go idle, restart, then confirm our
+# include actually made it into the active config before pre-resolving.
+# Ported from advocdiaboly/asuswrt-merlin-amneziawg@8e95d3c (Dmitry Fomin).
+restart_dnsmasq_when_idle(){
+    local i=0
+    while [ -n "$(nvram get rc_service 2>/dev/null)" ]; do
+        [ $i -eq 0 ] && log_msg "Deferring dnsmasq restart until rc_service is idle..."
+        [ $i -ge 30 ] && { log_msg "WARNING: rc_service stayed busy, restarting dnsmasq anyway"; break; }
+        sleep 1
+        i=$((i + 1))
+    done
+
+    service restart_dnsmasq >/dev/null 2>&1
+    wait_for_dns 10
+
+    i=0
+    while [ $i -lt 10 ]; do
+        grep -qF "conf-file=$DNSMASQ_AWG_CONF" "$DNSMASQ_ACTIVE_CONF" 2>/dev/null && break
+        sleep 1
+        i=$((i + 1))
+    done
+    if ! grep -qF "conf-file=$DNSMASQ_AWG_CONF" "$DNSMASQ_ACTIVE_CONF" 2>/dev/null; then
+        log_msg "WARNING: dnsmasq restart did not apply AmneziaWG domain rules, retrying once"
+        service restart_dnsmasq >/dev/null 2>&1
+        wait_for_dns 10
+    fi
+
+    pre_resolve_domains
+}
+
 setup_firewall(){
     cleanup_firewall
 
@@ -535,21 +585,9 @@ setup_firewall(){
         setup_dns_interception
     fi
 
-    # --- Restart dnsmasq if geo active ---
+    # --- Restart dnsmasq if geo active (deferred until Merlin's rc_service is idle) ---
     if [ $domain_count -gt 0 ] || [ "$has_geo" = true ]; then
-        service restart_dnsmasq >/dev/null 2>&1
-        wait_for_dns 10
-        # Pre-resolve domains to populate ipset
-        if [ -f "$DNSMASQ_AWG_CONF" ]; then
-            local bg_count=0
-            awk -F/ '/^ipset=/{for(i=2;i<NF;i++)print $i}' "$DNSMASQ_AWG_CONF" | while read -r domain; do
-                [ -z "$domain" ] && continue
-                nslookup "$domain" 127.0.0.1 >/dev/null 2>&1 &
-                bg_count=$((bg_count + 1))
-                [ $bg_count -ge 10 ] && { wait; bg_count=0; }
-            done
-            wait
-        fi
+        restart_dnsmasq_when_idle &
     fi
 
     # --- Always flush conntrack so devices reconnect through VPN ---
@@ -612,20 +650,29 @@ validate_port(){
     return 0
 }
 
+# Ported from advocdiaboly/asuswrt-merlin-amneziawg@1e3ea05 (Dmitry Fomin):
+# reject values above UINT32_MAX so a malformed setting can't produce a
+# config value amneziawg-go/awg would silently truncate or misparse.
 validate_uint(){
     echo "$1" | grep -qE '^[0-9]+$' || return 1
+    [ "$1" -le 4294967295 ] 2>/dev/null || return 1
     return 0
 }
 
 # Accepts a single uint or a "min-max" range (start <= end). Used for H1-H4
 # and the AmneziaWG 3.0 timing/padding fields, which all share this syntax.
-# Ported from upstream r0otx@f7cd46a (PR #8, ayuckhulk/ranges-support-for-h1-h4).
+# Ported from upstream r0otx@f7cd46a (PR #8, ayuckhulk/ranges-support-for-h1-h4);
+# UINT32_MAX bound ported from advocdiaboly/asuswrt-merlin-amneziawg@1e3ea05 (Dmitry Fomin).
 validate_range(){
     echo "$1" | grep -qE '^[0-9]+(-[0-9]+)?$' || return 1
     case "$1" in
         *-*)
             local start=${1%-*} end=${1#*-}
             [ "$start" -le "$end" ] || return 1
+            [ "$end" -le 4294967295 ] 2>/dev/null || return 1
+            ;;
+        *)
+            [ "$1" -le 4294967295 ] 2>/dev/null || return 1
             ;;
     esac
     return 0
@@ -672,13 +719,22 @@ generate_config(){
     local i1="" i2="" i3="" i4="" i5=""
     local initdata=$(get_setting awg_initdata)
     if [ -n "$initdata" ]; then
-        local decoded
-        decoded=$(echo "$initdata" | base64 -d 2>/dev/null)
-        i1=$(echo "$decoded" | awk '/^I1 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
-        i2=$(echo "$decoded" | awk '/^I2 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
-        i3=$(echo "$decoded" | awk '/^I3 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
-        i4=$(echo "$decoded" | awk '/^I4 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
-        i5=$(echo "$decoded" | awk '/^I5 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
+        # Ported from advocdiaboly/asuswrt-merlin-amneziawg@fbf595e (Dmitry Fomin):
+        # fall back to openssl if base64 isn't on PATH (varies across Merlin/Entware builds).
+        local decoded=""
+        command -v base64 >/dev/null 2>&1 && decoded=$(echo "$initdata" | base64 -d 2>/dev/null)
+        if [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1; then
+            decoded=$(echo "$initdata" | openssl enc -base64 -d -A 2>/dev/null)
+        fi
+        if [ -n "$decoded" ]; then
+            i1=$(echo "$decoded" | awk '/^I1 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
+            i2=$(echo "$decoded" | awk '/^I2 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
+            i3=$(echo "$decoded" | awk '/^I3 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
+            i4=$(echo "$decoded" | awk '/^I4 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
+            i5=$(echo "$decoded" | awk '/^I5 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
+        else
+            log_msg "ERROR: Failed to decode I1-I5 initdata"
+        fi
     fi
 
     local peer_pubkey=$(get_setting awg_peer_pubkey)
@@ -701,6 +757,8 @@ generate_config(){
     [ -n "$jmax" ] && { validate_uint "$jmax" || { log_msg "ERROR: Invalid Jmax: $jmax"; return 1; }; }
     [ -n "$s1" ] && { validate_uint "$s1" || { log_msg "ERROR: Invalid S1: $s1"; return 1; }; }
     [ -n "$s2" ] && { validate_uint "$s2" || { log_msg "ERROR: Invalid S2: $s2"; return 1; }; }
+    [ -n "$s3" ] && { validate_uint "$s3" || { log_msg "ERROR: Invalid S3: $s3"; return 1; }; }
+    [ -n "$s4" ] && { validate_uint "$s4" || { log_msg "ERROR: Invalid S4: $s4"; return 1; }; }
     [ -n "$h1" ] && { validate_header "$h1" || { log_msg "ERROR: Invalid H1: $h1"; return 1; }; }
     [ -n "$h2" ] && { validate_header "$h2" || { log_msg "ERROR: Invalid H2: $h2"; return 1; }; }
     [ -n "$h3" ] && { validate_header "$h3" || { log_msg "ERROR: Invalid H3: $h3"; return 1; }; }
@@ -796,7 +854,9 @@ do_start(){
 
     # Start userspace daemon
     mkdir -p /var/run/amneziawg
-    "$AWG_GO" "$IFACE" > /tmp/awg_daemon.log 2>&1 &
+    # Bound Go heap growth on low-RAM routers (256-512MB models in the support list).
+    # Ported from advocdiaboly/asuswrt-merlin-amneziawg@ea58f06 (Dmitry Fomin).
+    GOMEMLIMIT=320MiB GOGC=20 "$AWG_GO" "$IFACE" > /tmp/awg_daemon.log 2>&1 &
     if ! wait_for_iface "$IFACE" 10; then
         log_msg "ERROR: amneziawg-go failed to create interface"
         [ -f /tmp/awg_daemon.log ] && log_msg "Daemon output: $(cat /tmp/awg_daemon.log)"

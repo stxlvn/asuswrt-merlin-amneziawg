@@ -711,46 +711,48 @@ function parseConfig(text){
 
         var parts = line.split('=');
         if(parts.length < 2) continue;
-        var key = parts[0].trim();
+        // Ported from advocdiaboly/asuswrt-merlin-amneziawg@fbf595e (Dmitry Fomin):
+        // lowercase the key so exports with different casing still parse.
+        var key = parts[0].trim().toLowerCase();
         var val = parts.slice(1).join('=').trim();
 
         if(section === 'iface'){
             switch(key){
-                case 'PrivateKey': setVal('awg_privatekey', val); break;
-                case 'Address':    setVal('awg_address', val); break;
-                case 'ListenPort': setVal('awg_listenport', val); break;
-                case 'DNS':        setVal('awg_dns', val); break;
-                case 'Jc':         setVal('awg_jc', val); break;
-                case 'Jmin':       setVal('awg_jmin', val); break;
-                case 'Jmax':       setVal('awg_jmax', val); break;
-                case 'S1':         setVal('awg_s1', val); break;
-                case 'S2':         setVal('awg_s2', val); break;
-                case 'S3':         setVal('awg_s3', val); break;
-                case 'S4':         setVal('awg_s4', val); break;
-                case 'H1':         setVal('awg_h1', val); break;
-                case 'H2':         setVal('awg_h2', val); break;
-                case 'H3':         setVal('awg_h3', val); break;
-                case 'H4':         setVal('awg_h4', val); break;
-                case 'I1': setVal('awg_i1', val); break;
-                case 'I2': setVal('awg_i2', val); break;
-                case 'I3': setVal('awg_i3', val); break;
-                case 'I4': setVal('awg_i4', val); break;
-                case 'I5': setVal('awg_i5', val); break;
-                case 'HeaderProtectionKey':    setVal('awg_header_protection_key', val); break;
-                case 'ContentPaddingAddition': setVal('awg_content_padding', val); break;
-                case 'RekeyAfterTime':         setVal('awg_rekey_after', val); break;
-                case 'RekeyTimeout':           setVal('awg_rekey_timeout', val); break;
-                case 'RejectAfterTime':        setVal('awg_reject_after', val); break;
-                case 'KeepaliveTimeout':       setVal('awg_keepalive_timeout', val); break;
-                case 'MaxHandshakeAttempts':   setVal('awg_max_handshake_attempts', val); break;
+                case 'privatekey': setVal('awg_privatekey', val); break;
+                case 'address':    setVal('awg_address', val); break;
+                case 'listenport': setVal('awg_listenport', val); break;
+                case 'dns':        setVal('awg_dns', val); break;
+                case 'jc':         setVal('awg_jc', val); break;
+                case 'jmin':       setVal('awg_jmin', val); break;
+                case 'jmax':       setVal('awg_jmax', val); break;
+                case 's1':         setVal('awg_s1', val); break;
+                case 's2':         setVal('awg_s2', val); break;
+                case 's3':         setVal('awg_s3', val); break;
+                case 's4':         setVal('awg_s4', val); break;
+                case 'h1':         setVal('awg_h1', val); break;
+                case 'h2':         setVal('awg_h2', val); break;
+                case 'h3':         setVal('awg_h3', val); break;
+                case 'h4':         setVal('awg_h4', val); break;
+                case 'i1': setVal('awg_i1', val); break;
+                case 'i2': setVal('awg_i2', val); break;
+                case 'i3': setVal('awg_i3', val); break;
+                case 'i4': setVal('awg_i4', val); break;
+                case 'i5': setVal('awg_i5', val); break;
+                case 'headerprotectionkey':    setVal('awg_header_protection_key', val); break;
+                case 'contentpaddingaddition': setVal('awg_content_padding', val); break;
+                case 'rekeyaftertime':         setVal('awg_rekey_after', val); break;
+                case 'rekeytimeout':           setVal('awg_rekey_timeout', val); break;
+                case 'rejectaftertime':        setVal('awg_reject_after', val); break;
+                case 'keepalivetimeout':       setVal('awg_keepalive_timeout', val); break;
+                case 'maxhandshakeattempts':   setVal('awg_max_handshake_attempts', val); break;
             }
         } else if(section === 'peer'){
             switch(key){
-                case 'PublicKey':          setVal('awg_peer_pubkey', val); break;
-                case 'PresharedKey':       setVal('awg_peer_psk', val); break;
-                case 'Endpoint':           setVal('awg_peer_endpoint', val); break;
-                case 'AllowedIPs':         setVal('awg_peer_allowedips', val); break;
-                case 'PersistentKeepalive': setVal('awg_peer_keepalive', val); break;
+                case 'publickey':          setVal('awg_peer_pubkey', val); break;
+                case 'presharedkey':       setVal('awg_peer_psk', val); break;
+                case 'endpoint':           setVal('awg_peer_endpoint', val); break;
+                case 'allowedips':         setVal('awg_peer_allowedips', val); break;
+                case 'persistentkeepalive': setVal('awg_peer_keepalive', val); break;
             }
         }
     }
@@ -1045,23 +1047,23 @@ function initTagList(fieldId, opts){
                 </tr>
                 <tr>
                     <th>I1 (мусор инициализации)</th>
-                    <td><input type="text" class="input_32_table" id="awg_i1" style="width:95%; font-size:11px;" maxlength="512" placeholder="Заполняется автоматически при импорте конфига"></td>
+                    <td><input type="text" class="input_32_table" id="awg_i1" style="width:95%; font-size:11px;" maxlength="2048" placeholder="Заполняется автоматически при импорте конфига"></td>
                 </tr>
                 <tr>
                     <th>I2</th>
-                    <td><input type="text" class="input_32_table" id="awg_i2" style="width:95%; font-size:11px;" maxlength="512" placeholder="(опционально)"></td>
+                    <td><input type="text" class="input_32_table" id="awg_i2" style="width:95%; font-size:11px;" maxlength="2048" placeholder="(опционально)"></td>
                 </tr>
                 <tr>
                     <th>I3</th>
-                    <td><input type="text" class="input_32_table" id="awg_i3" style="width:95%; font-size:11px;" maxlength="512" placeholder="(опционально)"></td>
+                    <td><input type="text" class="input_32_table" id="awg_i3" style="width:95%; font-size:11px;" maxlength="2048" placeholder="(опционально)"></td>
                 </tr>
                 <tr>
                     <th>I4</th>
-                    <td><input type="text" class="input_32_table" id="awg_i4" style="width:95%; font-size:11px;" maxlength="512" placeholder="(опционально)"></td>
+                    <td><input type="text" class="input_32_table" id="awg_i4" style="width:95%; font-size:11px;" maxlength="2048" placeholder="(опционально)"></td>
                 </tr>
                 <tr>
                     <th>I5</th>
-                    <td><input type="text" class="input_32_table" id="awg_i5" style="width:95%; font-size:11px;" maxlength="512" placeholder="(опционально)"></td>
+                    <td><input type="text" class="input_32_table" id="awg_i5" style="width:95%; font-size:11px;" maxlength="2048" placeholder="(опционально)"></td>
                 </tr>
                 </table>
 
