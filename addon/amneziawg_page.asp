@@ -430,7 +430,35 @@ function updateGeoLists(){
     if(log) log.textContent = 'Загрузка гео-списков... Подождите.';
     document.form.action_script.value = "start_awgupdategeo";
     document.form.submit();
-    setTimeout(function(){ location.reload(); }, 60000);
+    if(btn) btn.disabled = true;
+
+    // Poll for actual completion instead of a fixed timer: with retries for
+    // flaky CDN edges, a full download pass can now take well past a
+    // minute, and reloading the page mid-download looked like AmneziaWG
+    // had "reset" even though the backend was still running fine.
+    var attempts = 0;
+    var poll = setInterval(function(){
+        attempts++;
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/user/awg_status.htm?_=' + Date.now(), true);
+        xhr.timeout = 3000;
+        xhr.onload = function(){
+            try {
+                var s = JSON.parse(xhr.responseText);
+                if(s.log && log) log.textContent = s.log;
+                var done = /Geo databases updated/.test(s.log || '');
+                if(done || attempts >= 90){
+                    clearInterval(poll);
+                    if(btn) btn.disabled = false;
+                    location.reload();
+                }
+            } catch(e){
+                if(attempts >= 90){ clearInterval(poll); if(btn) btn.disabled = false; location.reload(); }
+            }
+        };
+        xhr.onerror = function(){ if(attempts >= 90){ clearInterval(poll); if(btn) btn.disabled = false; location.reload(); } };
+        xhr.send();
+    }, 2000);
 }
 
 function fetchDhcpClients(){
