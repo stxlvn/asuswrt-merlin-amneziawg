@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.11"
+AWG_VERSION="1.4.12"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -64,6 +64,29 @@ run_ipset(){
 
 log_msg(){
     logger -t "$SCRIPT_NAME" "$1"
+}
+
+# `nvram get` talks to the firmware's envrams daemon over a socket and has
+# NO built-in timeout -- a lost reply parks the caller forever (this
+# router's busybox doesn't even ship a `timeout` command to bound it from
+# outside). Documented upstream as "the nvram-get wedge"
+# (github.com/william-aqn/asuswrt-merlin-amneziawg): rare per-call, but this
+# script calls nvram get on paths that run on every start/save/geo-update
+# (setup_ipv6_block, restart_dnsmasq_when_idle's poll loop -- up to 30x per
+# call), and a background caller (restart_dnsmasq_when_idle runs via `&`)
+# that wedges never gets noticed or cleaned up, just accumulates. Never call
+# `nvram get` unguarded on a repeating path -- always go through this.
+nvram_get_safe(){
+    local key="$1" max="${2:-5}" tmpf="/tmp/.awg_nvram_$$"
+    nvram get "$key" > "$tmpf" 2>/dev/null &
+    local nv_pid=$! waited=0
+    while kill -0 "$nv_pid" 2>/dev/null; do
+        waited=$((waited + 1))
+        [ $waited -ge $max ] && { kill -9 "$nv_pid" 2>/dev/null; rm -f "$tmpf"; return 1; }
+        sleep 1
+    done
+    cat "$tmpf" 2>/dev/null
+    rm -f "$tmpf"
 }
 
 get_setting(){
@@ -403,7 +426,7 @@ setup_dns_interception(){
 
 setup_ipv6_block(){
     local ipv6_svc
-    ipv6_svc=$(nvram get ipv6_service 2>/dev/null)
+    ipv6_svc=$(nvram_get_safe ipv6_service)
     [ "$ipv6_svc" = "disabled" ] || [ -z "$ipv6_svc" ] && return 0
     ip6tables $IPT_W -I FORWARD -i br0 -o "$IFACE" -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
     ip6tables $IPT_W -I FORWARD -i "$IFACE" -o br0 -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
@@ -499,7 +522,7 @@ pre_resolve_domains(){
 # Ported from advocdiaboly/asuswrt-merlin-amneziawg@8e95d3c (Dmitry Fomin).
 restart_dnsmasq_when_idle(){
     local i=0
-    while [ -n "$(nvram get rc_service 2>/dev/null)" ]; do
+    while [ -n "$(nvram_get_safe rc_service)" ]; do
         [ $i -eq 0 ] && log_msg "Deferring dnsmasq restart until rc_service is idle..."
         [ $i -ge 30 ] && { log_msg "WARNING: rc_service stayed busy, restarting dnsmasq anyway"; break; }
         sleep 1
@@ -1279,7 +1302,7 @@ STATUSEOF
 
 do_install_page(){
     source /usr/sbin/helper.sh
-    nvram get rc_support | grep -q am_addons || { log_msg "ERROR: Addons not supported"; return 1; }
+    nvram_get_safe rc_support | grep -q am_addons || { log_msg "ERROR: Addons not supported"; return 1; }
 
     mkdir -p "$ADDON_DIR"
     [ "$(readlink -f "$0")" != "$(readlink -f "$ADDON_DIR/amneziawg.sh")" ] && cp "$0" "$ADDON_DIR/amneziawg.sh"
