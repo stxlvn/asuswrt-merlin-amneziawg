@@ -123,11 +123,25 @@ cloudflare,cloudfront,digitalocean,discord,google_meet,hetzner,meta,ovh,roblox,t
 
 ### GeoSite Service Lists
 
-Введите имена сервисов для маршрутизации по доменам через dnsmasq (список: [itdoginfo/allow-domains/Services](https://github.com/itdoginfo/allow-domains/tree/main/Services)):
+Введите имена для маршрутизации по доменам через dnsmasq. Помимо сервисов ([itdoginfo/allow-domains/Services](https://github.com/itdoginfo/allow-domains/tree/main/Services)) также доступны категории доменов ([Categories](https://github.com/itdoginfo/allow-domains/tree/main/Categories)) и готовые страновые бандлы (Россия/Украина):
 
 ```
 cloudflare,cloudfront,digitalocean,discord,google_ai,google_meet,google_play,hdrezka,hetzner,meta,ovh,roblox,telegram,tiktok,twitter,youtube
 ```
+
+Категории:
+
+```
+anime,block,geoblock,hodca,news,porn
+```
+
+Страны (готовые списки от itdoginfo — [Russia](https://github.com/itdoginfo/allow-domains/tree/main/Russia)/[Ukraine](https://github.com/itdoginfo/allow-domains/tree/main/Ukraine)):
+
+| Имя | Описание |
+|-----|----------|
+| `ru_inside` | Ресурсы, блокируемые в России (для пользователей в РФ) |
+| `ru_outside` | Российские ресурсы, недоступные за границей (для тех, кто вне РФ) |
+| `ua_inside` | Список заблокированных в Украине ресурсов |
 
 Требует чтобы устройства использовали роутер как DNS-сервер. Для iPhone: **Настройки > Wi-Fi > (i) > DNS > Вручную > только IP роутера**.
 

@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.0"
+AWG_VERSION="1.3.1"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -26,7 +26,7 @@ AWG_CHAIN="AWG"
 LOCKDIR="/tmp/.awg_lock"
 ALLOWDOMAINS_BASE="https://raw.githubusercontent.com/itdoginfo/allow-domains/main"
 GEOIP_SERVICES="cloudflare cloudfront digitalocean discord google_meet hetzner meta ovh roblox telegram twitter"
-GEOSITE_SERVICES="cloudflare cloudfront digitalocean discord google_ai google_meet google_play hdrezka hetzner meta ovh roblox telegram tiktok twitter youtube"
+GEOSITE_SERVICES="cloudflare cloudfront digitalocean discord google_ai google_meet google_play hdrezka hetzner meta ovh roblox telegram tiktok twitter youtube anime block geoblock hodca news porn ru_inside ru_outside ua_inside"
 
 # Ensure Entware binaries are in PATH (not set when called from httpd/service-event)
 export PATH="/opt/bin:/opt/sbin:$PATH"
@@ -179,15 +179,31 @@ download_geoip_service(){
     return 1
 }
 
-# Download a single GeoSite service domain list into the cache.
-# Source: github.com/itdoginfo/allow-domains (Services/<svc>.lst)
+# Map a GeoSite list name to its path under itdoginfo/allow-domains. Most
+# names are per-service domain lists (Services/<svc>.lst); a few are curated
+# domain categories or country bundles that live under their own top-level
+# directories but share the same one-domain-per-line RAW format.
+geosite_list_path(){
+    case "$1" in
+        anime|block|geoblock|hodca|news|porn) echo "Categories/$1.lst" ;;
+        ru_inside)  echo "Russia/inside-raw.lst" ;;
+        ru_outside) echo "Russia/outside-raw.lst" ;;
+        ua_inside)  echo "Ukraine/inside-raw.lst" ;;
+        *) echo "Services/$1.lst" ;;
+    esac
+}
+
+# Download a single GeoSite list into the cache.
+# Source: github.com/itdoginfo/allow-domains (see geosite_list_path for layout)
 download_geosite_service(){
     local svc="$1"
     svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
     [ -z "$svc" ] && return 1
     mkdir -p "$GEO_DIR/services"
+    local list_path
+    list_path=$(geosite_list_path "$svc")
     local tmp="$GEO_DIR/services/.dl_${svc}.tmp"
-    if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/Services/${svc}.lst" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    if curl -sfL --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/${list_path}" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
         mv "$tmp" "$GEO_DIR/services/${svc}.txt"
         return 0
     fi

@@ -117,11 +117,25 @@ These are IP-based -- work without DNS, ideal for Telegram and other apps that c
 
 ### GeoSite Service Lists
 
-Add service names for domain-based routing via dnsmasq (list: [itdoginfo/allow-domains/Services](https://github.com/itdoginfo/allow-domains/tree/main/Services)):
+Add names for domain-based routing via dnsmasq. Besides per-service lists ([itdoginfo/allow-domains/Services](https://github.com/itdoginfo/allow-domains/tree/main/Services)), domain categories ([Categories](https://github.com/itdoginfo/allow-domains/tree/main/Categories)) and pre-built country bundles (Russia/Ukraine) are also available:
 
 ```
 cloudflare,cloudfront,digitalocean,discord,google_ai,google_meet,google_play,hdrezka,hetzner,meta,ovh,roblox,telegram,tiktok,twitter,youtube
 ```
+
+Categories:
+
+```
+anime,block,geoblock,hodca,news,porn
+```
+
+Countries (curated lists from itdoginfo — [Russia](https://github.com/itdoginfo/allow-domains/tree/main/Russia)/[Ukraine](https://github.com/itdoginfo/allow-domains/tree/main/Ukraine)):
+
+| Name | Description |
+|------|--------------|
+| `ru_inside` | Resources blocked in Russia (for users inside Russia) |
+| `ru_outside` | Russian resources unavailable abroad (for users outside Russia) |
+| `ua_inside` | Resources blocked in Ukraine |
 
 Requires devices to use the router as DNS server. For iPhones: **Settings > Wi-Fi > (i) > DNS > Manual > router IP only**.
 

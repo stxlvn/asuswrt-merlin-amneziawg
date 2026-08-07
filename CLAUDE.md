@@ -95,11 +95,17 @@ ipset match -> table 300), `direct`. Default policy applies to unlisted devices.
 fwmark 0x100.
 
 ### GeoIP/GeoSite source
-Lists come from [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) (plain-text
-`Subnets/IPv4/<svc>.lst` and `Services/<svc>.lst`, one entry per line, no parsing needed). Service
-name lists (`GEOIP_SERVICES`, `GEOSITE_SERVICES` in `amneziawg.sh`) must match the filenames
-actually present in that repo -- not every domain-list service has a matching subnet list (e.g.
-CDN-fronted services like `youtube`/`google_ai`/`tiktok` are domain-only, no stable IP ranges).
+Lists come from [itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains) (plain-text,
+one entry per line, no parsing needed). GeoIP (`GEOIP_SERVICES`) only pulls `Subnets/IPv4/<svc>.lst`.
+GeoSite (`GEOSITE_SERVICES`) is a flat namespace across three directory shapes in that repo, resolved
+by `geosite_list_path()` in `amneziawg.sh`:
+- per-service domain lists -- `Services/<svc>.lst` (default case)
+- domain categories (`anime block geoblock hodca news porn`) -- `Categories/<name>.lst`
+- curated country bundles (`ru_inside ru_outside ua_inside`) -- `Russia/inside-raw.lst`,
+  `Russia/outside-raw.lst`, `Ukraine/inside-raw.lst`
+Names in both lists must match filenames actually present upstream -- not every domain-list service
+has a matching subnet list (e.g. CDN-fronted services like `youtube`/`google_ai`/`tiktok` are
+domain-only, no stable IP ranges), and category/country names only exist on the GeoSite side.
 
 ## Shell scripting notes
 
