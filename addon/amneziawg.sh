@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.2"
+AWG_VERSION="1.3.3"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -742,6 +742,14 @@ generate_config(){
         if [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1; then
             decoded=$(echo "$initdata" | openssl enc -base64 -d -A 2>/dev/null)
         fi
+        # Neither a standalone `base64` nor `openssl` is guaranteed to be
+        # installed (Entware packages, both optional). busybox itself is
+        # always present since it *is* the userspace on this firmware, and
+        # its multi-call binary frequently has the base64 applet built in
+        # even when it isn't symlinked onto PATH as a separate command.
+        if [ -z "$decoded" ] && command -v busybox >/dev/null 2>&1; then
+            decoded=$(echo "$initdata" | busybox base64 -d 2>/dev/null)
+        fi
         if [ -n "$decoded" ]; then
             i1=$(echo "$decoded" | awk '/^I1 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
             i2=$(echo "$decoded" | awk '/^I2 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
@@ -749,7 +757,7 @@ generate_config(){
             i4=$(echo "$decoded" | awk '/^I4 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
             i5=$(echo "$decoded" | awk '/^I5 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
         else
-            log_msg "ERROR: Failed to decode I1-I5 initdata"
+            log_msg "ERROR: Failed to decode I1-I5 initdata (tried base64, openssl, busybox base64 -- none available/worked)"
         fi
     fi
 
@@ -1298,18 +1306,12 @@ do_service_event(){
         awgsaveconf)
             local _wt=0; while [ $_wt -lt 5 ] && [ -z "$(get_setting awg_privatekey)" ]; do sleep 1; _wt=$((_wt+1)); done
             generate_config
-            if ! geo_available; then
-                # Clear geo settings if databases not downloaded
-                local _cs_changed=false
-                for _gf in awg_geosite_services awg_geoip_services awg_geo_custom_domains awg_geo_custom_ips; do
-                    local _gv=$(get_setting "$_gf")
-                    if [ -n "$_gv" ]; then
-                        sed -i "/^${_gf} /d" "$SETTINGS"
-                        _cs_changed=true
-                    fi
-                done
-                [ "$_cs_changed" = true ] && log_msg "WARNING: Geo fields cleared — databases not downloaded. Click Download Lists first."
-            fi
+            # Geo settings are intentionally never auto-cleared here: an update
+            # wipes /opt/amneziawg (including the downloaded geo cache) via
+            # prerm, so geo_available() is briefly false on every single
+            # update even though the user's GeoIP/GeoSite selection is still
+            # valid. setup_firewall already warns per-list and skips whatever
+            # isn't cached without breaking anything else.
             update_geo_if_needed
             is_running && setup_firewall
             update_status
