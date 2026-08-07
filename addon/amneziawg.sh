@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.6"
+AWG_VERSION="1.4.7"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -333,10 +333,22 @@ download_all_geo(){
 # Mount AmneziaWG tab into Merlin menu
 mount_menu_tree(){
     local page="$1"
-    [ ! -f /tmp/menuTree.js ] && cp /www/require/modules/menuTree.js /tmp/
-    sed -i '/AmneziaWG/d' /tmp/menuTree.js
-    sed -i "/url: \"Advanced_VPN_OpenVPN.asp\"/a {url: \"$page\", tabName: \"AmneziaWG\"}," /tmp/menuTree.js
+    # Unmount first so the copy below always comes from the real underlying
+    # file, not a stale /tmp/menuTree.js left over from a previous session
+    # (/tmp survives across addon updates, only cleared on reboot) or
+    # whatever another addon's own bind mount currently has in place. Across
+    # many install/uninstall/update cycles, sed-patching on top of an
+    # already-patched copy can silently corrupt or drop the anchor line
+    # below, at which point the insert just does nothing -- no error, the
+    # tab just quietly stops appearing.
     umount /www/require/modules/menuTree.js 2>/dev/null
+    cp /www/require/modules/menuTree.js /tmp/menuTree.js
+    sed -i '/AmneziaWG/d' /tmp/menuTree.js
+    if grep -q 'url: "Advanced_VPN_OpenVPN.asp"' /tmp/menuTree.js; then
+        sed -i "/url: \"Advanced_VPN_OpenVPN.asp\"/a {url: \"$page\", tabName: \"AmneziaWG\"}," /tmp/menuTree.js
+    else
+        log_msg "WARNING: menuTree.js anchor not found, AmneziaWG menu tab may not appear"
+    fi
     mount -o bind /tmp/menuTree.js /www/require/modules/menuTree.js
 }
 
@@ -1330,9 +1342,12 @@ do_uninstall(){
 
     rm -rf "$ADDON_DIR"
 
-    if [ -f /tmp/menuTree.js ]; then
+    # Same reasoning as mount_menu_tree(): unmount first to work from the
+    # real underlying file, not a possibly-stale /tmp copy.
+    umount /www/require/modules/menuTree.js 2>/dev/null
+    if [ -f /www/require/modules/menuTree.js ]; then
+        cp /www/require/modules/menuTree.js /tmp/menuTree.js
         sed -i '/AmneziaWG/d' /tmp/menuTree.js
-        umount /www/require/modules/menuTree.js 2>/dev/null
         mount -o bind /tmp/menuTree.js /www/require/modules/menuTree.js
     fi
 
