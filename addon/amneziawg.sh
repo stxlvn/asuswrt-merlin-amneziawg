@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.5.0"
+AWG_VERSION="1.5.1"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -1018,6 +1018,20 @@ generate_config(){
     [ -n "$h3" ] && { validate_header "$h3" || { log_msg "ERROR: Invalid H3: $h3"; return 1; }; }
     [ -n "$h4" ] && { validate_header "$h4" || { log_msg "ERROR: Invalid H4: $h4"; return 1; }; }
     [ -n "$header_protection_key" ] && { validate_wgkey "$header_protection_key" || return 1; }
+
+    # amneziawg-go rejects the whole config if HeaderProtectionKey is set and
+    # any Sx padding is below HeaderCipherNonceSize (12 bytes) -- a value
+    # perfectly valid for AmneziaWG 2.0-only (no header protection) but a
+    # hard failure once a 3.0 HeaderProtectionKey is present. Some config
+    # providers hand out 2.0-style S1-S4 alongside 3.0 header-protection
+    # fields, producing exactly this combination. Clamp up rather than fail
+    # the whole tunnel over a padding-length technicality.
+    if [ -n "$header_protection_key" ]; then
+        [ -n "$s1" ] && [ "$s1" -lt 12 ] && { log_msg "WARNING: S1=$s1 too small for HeaderProtectionKey, clamped to 12"; s1=12; }
+        [ -n "$s2" ] && [ "$s2" -lt 12 ] && { log_msg "WARNING: S2=$s2 too small for HeaderProtectionKey, clamped to 12"; s2=12; }
+        [ -n "$s3" ] && [ "$s3" -lt 12 ] && { log_msg "WARNING: S3=$s3 too small for HeaderProtectionKey, clamped to 12"; s3=12; }
+        [ -n "$s4" ] && [ "$s4" -lt 12 ] && { log_msg "WARNING: S4=$s4 too small for HeaderProtectionKey, clamped to 12"; s4=12; }
+    fi
     [ -n "$content_padding" ] && { validate_range "$content_padding" || { log_msg "ERROR: Invalid ContentPaddingAddition: $content_padding"; return 1; }; }
     [ -n "$rekey_after" ] && { validate_range "$rekey_after" || { log_msg "ERROR: Invalid RekeyAfterTime: $rekey_after"; return 1; }; }
     [ -n "$rekey_timeout" ] && { validate_range "$rekey_timeout" || { log_msg "ERROR: Invalid RekeyTimeout: $rekey_timeout"; return 1; }; }

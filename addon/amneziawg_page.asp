@@ -766,6 +766,20 @@ function importConfig(){
 function parseConfig(text){
     if(!text) return;
 
+    // Clear every field this function can set before parsing, otherwise a
+    // fresh import that omits a key (e.g. a plain AmneziaWG 2.0 config with
+    // no HeaderProtectionKey/3.0 timing fields) silently inherits stale
+    // values left over from a previous import instead of leaving them
+    // unset -- the client then sends a mismatched mix of old 3.0 fields and
+    // new 2.0 fields to the server, breaking the handshake.
+    var allFields = ['awg_privatekey', 'awg_address', 'awg_listenport', 'awg_dns',
+        'awg_jc', 'awg_jmin', 'awg_jmax', 'awg_s1', 'awg_s2', 'awg_s3', 'awg_s4',
+        'awg_h1', 'awg_h2', 'awg_h3', 'awg_h4', 'awg_i1', 'awg_i2', 'awg_i3', 'awg_i4', 'awg_i5',
+        'awg_header_protection_key', 'awg_content_padding', 'awg_rekey_after',
+        'awg_rekey_timeout', 'awg_reject_after', 'awg_keepalive_timeout', 'awg_max_handshake_attempts',
+        'awg_peer_pubkey', 'awg_peer_psk', 'awg_peer_endpoint', 'awg_peer_allowedips', 'awg_peer_keepalive'];
+    for(var f = 0; f < allFields.length; f++) setVal(allFields[f], '');
+
     var lines = text.split('\n');
     var section = '';
     for(var i = 0; i < lines.length; i++){
