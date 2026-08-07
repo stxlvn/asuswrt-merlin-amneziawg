@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.5.2"
+AWG_VERSION="1.5.5"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -218,7 +218,7 @@ human_size(){
 # Source: github.com/itdoginfo/allow-domains (Subnets/IPv4/<svc>.lst)
 download_geoip_service(){
     local svc="$1"
-    svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+    svc=$(echo "$svc" | tr -d ' ' | tr 'A-Z' 'a-z')
     [ -z "$svc" ] && return 1
     local tmp="$GEO_DIR/geoip/.dl_${svc}.tmp"
     local attempt=0 http_code rc
@@ -246,6 +246,23 @@ download_geoip_service(){
         # attempts matters more here than a longer wait between them.
         [ $attempt -lt 5 ] && sleep 2
     done
+    # All direct attempts failed -- if the tunnel is already up, retry once
+    # through it. Direct failures here aren't always the anycast noise above;
+    # the ISP can also be throttling/blocking raw.githubusercontent.com
+    # itself, which a direct retry will never recover from but the tunnel can.
+    if is_running; then
+        http_code=$(curl -s -o "$tmp" -w '%{http_code}' -A "amneziawg-merlin/$AWG_VERSION" \
+            --interface "$IFACE" --connect-timeout 10 --max-time 30 -L "${ALLOWDOMAINS_BASE}/Subnets/IPv4/${svc}.lst" 2>/dev/null)
+        rc=$?
+        if [ "$rc" -eq 0 ] && [ "$http_code" = "200" ] && [ -s "$tmp" ]; then
+            grep -v ":" "$tmp" > "$GEO_DIR/geoip/${svc}.cidr"
+            rm -f "$tmp"
+            [ -s "$GEO_DIR/geoip/${svc}.cidr" ] || { rm -f "$GEO_DIR/geoip/${svc}.cidr"; return 1; }
+            log_msg "GeoIP $svc: direct download failed, succeeded through tunnel"
+            return 0
+        fi
+        log_msg "GeoIP $svc: tunnel fallback also failed: curl_rc=$rc http_code=${http_code:-none}"
+    fi
     rm -f "$tmp"
     return 1
 }
@@ -268,7 +285,7 @@ geosite_list_path(){
 # Source: github.com/itdoginfo/allow-domains (see geosite_list_path for layout)
 download_geosite_service(){
     local svc="$1"
-    svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+    svc=$(echo "$svc" | tr -d ' ' | tr 'A-Z' 'a-z')
     [ -z "$svc" ] && return 1
     mkdir -p "$GEO_DIR/services"
     local list_path
@@ -291,6 +308,19 @@ download_geosite_service(){
         # matters more here than a longer wait between them.
         [ $attempt -lt 5 ] && sleep 2
     done
+    # See matching comment in download_geoip_service: fall back to the
+    # tunnel itself if it's already up and every direct attempt failed.
+    if is_running; then
+        http_code=$(curl -s -o "$tmp" -w '%{http_code}' -A "amneziawg-merlin/$AWG_VERSION" \
+            --interface "$IFACE" --connect-timeout 10 --max-time 30 -L "${ALLOWDOMAINS_BASE}/${list_path}" 2>/dev/null)
+        rc=$?
+        if [ "$rc" -eq 0 ] && [ "$http_code" = "200" ] && [ -s "$tmp" ]; then
+            mv "$tmp" "$GEO_DIR/services/${svc}.txt"
+            log_msg "GeoSite $svc: direct download failed, succeeded through tunnel"
+            return 0
+        fi
+        log_msg "GeoSite $svc: tunnel fallback also failed: curl_rc=$rc http_code=${http_code:-none}"
+    fi
     rm -f "$tmp"
     return 1
 }
@@ -319,6 +349,16 @@ download_all_geo(){
 
     mkdir -p "$GEO_DIR/geoip" "$GEO_DIR/domains"
     log_msg "Downloading all geo databases..."
+
+    # The first 1-2 items in each loop below reliably fail while every
+    # later one succeeds -- consistently the SAME first items (whichever
+    # happen to be first in GEOIP_SERVICES/GEOSITE_SERVICES), not a random
+    # subset. That points at a cold local DNS cache for
+    # raw.githubusercontent.com (this function runs rarely enough that any
+    # earlier cached answer has expired) rather than per-file anycast noise.
+    # One throwaway lookup here lets dnsmasq resolve/cache it (or fail over
+    # to a working upstream) before the real, logged attempts start.
+    curl -s -o /dev/null --connect-timeout 5 --max-time 8 "$ALLOWDOMAINS_BASE/" 2>/dev/null
 
     # Download all GeoIP service CIDR lists
     local count=0 total=0 ok=0
@@ -594,7 +634,7 @@ setup_firewall(){
         mkdir -p "$GEO_DIR/domains"
         rm -f "$GEO_DIR/domains/geosite_"*.txt
         for svc in $(echo "$geosite_services" | tr ',' ' '); do
-            svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+            svc=$(echo "$svc" | tr -d ' ' | tr 'A-Z' 'a-z')
             [ -z "$svc" ] && continue
             if [ -f "$GEO_DIR/services/${svc}.txt" ]; then
                 cp "$GEO_DIR/services/${svc}.txt" "$GEO_DIR/domains/geosite_${svc}.txt"
