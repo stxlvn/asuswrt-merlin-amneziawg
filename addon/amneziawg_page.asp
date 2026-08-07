@@ -677,6 +677,42 @@ function setOfflineUI(){
     document.getElementById('btn_restart').style.display = 'none';
 }
 
+function copyLog(){
+    var logEl = document.getElementById('awg_log');
+    var text = logEl ? logEl.textContent : '';
+    var btn = document.getElementById('btn_copy_log');
+    function report(ok){
+        if(!btn) return;
+        var old = btn.value;
+        btn.value = ok ? 'Скопировано!' : 'Не удалось скопировать';
+        setTimeout(function(){ btn.value = old; }, 2000);
+    }
+    function fallbackCopy(){
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.top = '0';
+        ta.style.left = '0';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch(e){ ok = false; }
+        document.body.removeChild(ta);
+        report(ok);
+    }
+    // Merlin's web UI usually runs on plain http:// on the LAN, where the
+    // Clipboard API is unavailable (secure-context only) -- try it as a
+    // progressive enhancement, but the execCommand fallback is what
+    // actually works in the common case.
+    if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(function(){ report(true); }, fallbackCopy);
+    } else {
+        fallbackCopy();
+    }
+}
+
 var _initParams = {};
 
 function importConfig(){
@@ -1216,7 +1252,10 @@ function initTagList(fieldId, opts){
                 </div>
 
                 <!-- ==================== LOG ==================== -->
-                <div class="awg-section" style="margin-top:15px;">Журнал</div>
+                <div class="awg-section" style="margin-top:15px; display:flex; align-items:center; justify-content:space-between;">
+                    <span>Журнал</span>
+                    <input type="button" class="button_gen" id="btn_copy_log" value="Копировать" onclick="copyLog();" style="font-size:11px; padding:2px 10px; text-transform:none; font-weight:normal;">
+                </div>
                 <div id="awg_log" class="awg-log">Ожидание данных...</div>
                 <div style="text-align:right; font-size:11px; opacity:0.5; margin-top:4px;">
                     <a href="https://github.com/stxlvn/asuswrt-merlin-amneziawg" target="_blank" style="text-decoration:none;">&copy; stxlvn</a>
