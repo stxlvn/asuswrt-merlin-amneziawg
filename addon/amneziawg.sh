@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.4"
+AWG_VERSION="1.4.5"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -245,6 +245,26 @@ download_geosite_service(){
 
 # Download all geo databases (called at install and update)
 download_all_geo(){
+    # Guard against overlapping runs: the web UI's "Update Now" used to
+    # reload on a fixed 60s timer with no visual feedback, so a user could
+    # click it again mid-download thinking the first click didn't register
+    # -- each run then independently reapplies the firewall on completion,
+    # which looks like AmneziaWG spontaneously restarting even though the
+    # tunnel interface/daemon itself is never touched. v1.4.4 disables the
+    # button and polls for real completion instead, but guard here too in
+    # case of a resubmitted form or a second tab.
+    local geo_lock="/tmp/.awg_geo_update_running"
+    if [ -f "$geo_lock" ]; then
+        local lock_pid
+        lock_pid=$(cat "$geo_lock" 2>/dev/null)
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+            log_msg "Geo update already in progress (pid $lock_pid), skipping duplicate run"
+            return 1
+        fi
+    fi
+    echo $$ > "$geo_lock"
+    trap 'rm -f "$geo_lock"' EXIT
+
     mkdir -p "$GEO_DIR/geoip" "$GEO_DIR/domains"
     log_msg "Downloading all geo databases..."
 
