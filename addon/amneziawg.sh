@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.7"
+AWG_VERSION="1.3.8"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -758,12 +758,24 @@ generate_config(){
     local i1="" i2="" i3="" i4="" i5=""
     local initdata=$(get_setting awg_initdata)
     if [ -n "$initdata" ]; then
+        # custom_settings.txt round-trips through Merlin's own nvram-backed
+        # storage, which has been observed to introduce stray characters
+        # (embedded spaces/newlines) into otherwise-valid base64 -- strict
+        # decoders (GNU base64 without --ignore-garbage) then refuse the
+        # whole string. Strip anything outside the base64 alphabet up front
+        # so a decode failure means the decoder is genuinely missing, not
+        # that one stray byte poisoned an otherwise-fine string.
+        local clean_initdata
+        clean_initdata=$(echo "$initdata" | tr -dc 'A-Za-z0-9+/=')
+        if [ "$clean_initdata" != "$initdata" ]; then
+            log_msg "initdata contained non-base64 characters, stripped before decoding (len ${#initdata} -> ${#clean_initdata})"
+        fi
         # Ported from advocdiaboly/asuswrt-merlin-amneziawg@fbf595e (Dmitry Fomin):
         # fall back to openssl if base64 isn't on PATH (varies across Merlin/Entware builds).
         local decoded=""
-        command -v base64 >/dev/null 2>&1 && decoded=$(echo "$initdata" | base64 -d 2>/dev/null)
+        command -v base64 >/dev/null 2>&1 && decoded=$(echo "$clean_initdata" | base64 -d -i 2>/dev/null || echo "$clean_initdata" | base64 -d 2>/dev/null)
         if [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1; then
-            decoded=$(echo "$initdata" | openssl enc -base64 -d -A 2>/dev/null)
+            decoded=$(echo "$clean_initdata" | openssl enc -base64 -d -A 2>/dev/null)
         fi
         # Neither a standalone `base64` nor `openssl` is guaranteed to be
         # installed (Entware packages, both optional). busybox itself is
@@ -771,7 +783,7 @@ generate_config(){
         # its multi-call binary frequently has the base64 applet built in
         # even when it isn't symlinked onto PATH as a separate command.
         if [ -z "$decoded" ] && command -v busybox >/dev/null 2>&1; then
-            decoded=$(echo "$initdata" | busybox base64 -d 2>/dev/null)
+            decoded=$(echo "$clean_initdata" | busybox base64 -d 2>/dev/null)
         fi
         # Self-heal once per boot if postinst's auto-install didn't take (e.g.
         # network wasn't up yet during opkg install). This attempt is logged,
@@ -798,9 +810,9 @@ generate_config(){
                 log_msg "No base64 decoder available, attempting: $opkg_bin install coreutils-base64"
                 if "$opkg_bin" install coreutils-base64 >/dev/null 2>&1 || "$opkg_bin" install openssl-util >/dev/null 2>&1; then
                     log_msg "base64 decoder installed, retrying I1-I5 decode"
-                    command -v base64 >/dev/null 2>&1 && decoded=$(echo "$initdata" | base64 -d 2>/dev/null)
+                    command -v base64 >/dev/null 2>&1 && decoded=$(echo "$clean_initdata" | base64 -d -i 2>/dev/null || echo "$clean_initdata" | base64 -d 2>/dev/null)
                     [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1 && \
-                        decoded=$(echo "$initdata" | openssl enc -base64 -d -A 2>/dev/null)
+                        decoded=$(echo "$clean_initdata" | openssl enc -base64 -d -A 2>/dev/null)
                 else
                     log_msg "ERROR: $opkg_bin install coreutils-base64/openssl-util failed -- check internet/opkg feed"
                 fi
@@ -815,7 +827,7 @@ generate_config(){
             i4=$(echo "$decoded" | awk '/^I4 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
             i5=$(echo "$decoded" | awk '/^I5 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
         else
-            log_msg "ERROR: Failed to decode I1-I5 initdata (tried base64, openssl, busybox base64 -- none available/worked)"
+            log_msg "ERROR: Failed to decode I1-I5 initdata (tried base64, openssl, busybox base64 -- len=${#initdata} clean_len=${#clean_initdata} prefix='$(echo "$clean_initdata" | cut -c1-12)...')"
         fi
     fi
 
