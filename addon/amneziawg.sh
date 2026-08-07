@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.9"
+AWG_VERSION="1.4.10"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -31,18 +31,25 @@ GEOSITE_SERVICES="cloudflare cloudfront digitalocean discord google_ai google_me
 # Ensure Entware binaries are in PATH (not set when called from httpd/service-event).
 export PATH="/opt/bin:/opt/sbin:$PATH"
 
-# ipset needs its Entware-side libipset (v1.4.6 background: PATH alone finds
-# the right /opt/sbin/ipset binary, but the dynamic linker resolves *shared
-# library* deps via LD_LIBRARY_PATH, not PATH -- without it, ipset silently
-# links against the OLDER firmware libipset.so.13 in /usr/lib and fails with
-# a version-symbol mismatch). v1.4.6 exported LD_LIBRARY_PATH globally for
-# the whole script to fix that, but that broke *other* Entware binaries that
-# were relying on the normal (non-overridden) library resolution -- notably
-# grep-gnu, which segfaults with /opt/lib forced ahead of its expected
-# libraries. Scope the override to just the one binary that actually needs
-# it instead of applying it to every subprocess this script runs.
+# Merlin firmware ships its own /usr/sbin/ipset, built and matched against
+# the router's actual kernel -- this is what Merlin itself uses internally
+# (the WGCI/parental-control ipset rules). Prefer it over Entware's ipset:
+# Entware's build is glibc 2.27 for a generic armv7 Cortex-A9 target, and on
+# at least one router that combination segfaults deterministically at the
+# same instruction offset for *every* dynamically-linked Entware binary that
+# hits that code path (verified: the on-disk ld-2.27.so is byte-identical to
+# upstream, not corrupted -- this is a real kernel/glibc ABI mismatch, not a
+# broken install). v1.4.6..v1.4.9 chased this as an LD_LIBRARY_PATH issue
+# (see git history) and improved things, but the firmware's own binary sidesteps
+# the whole Entware/glibc dependency for the one external tool this script
+# actually needs. Fall back to Entware's ipset for routers that don't ship
+# the native binary.
 run_ipset(){
-    LD_LIBRARY_PATH="/opt/lib:$LD_LIBRARY_PATH" ipset "$@"
+    if [ -x /usr/sbin/ipset ]; then
+        /usr/sbin/ipset "$@"
+    else
+        LD_LIBRARY_PATH="/opt/lib:$LD_LIBRARY_PATH" ipset "$@"
+    fi
 }
 
 # --- Helpers ---
