@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.14"
+AWG_VERSION="1.5.0"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -1106,23 +1106,39 @@ do_start(){
     [ ! -c /dev/net/tun ] && mknod /dev/net/tun c 10 200
     chmod 600 /dev/net/tun
 
+    # Ensure the vanilla in-kernel "wireguard" module never gets delegated
+    # to. It's stock WireGuard (no Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5 obfuscation
+    # support), not an AmneziaWG-aware module -- if it's loaded,
+    # amneziawg-go's kernel-support probe sees a link type named "wireguard"
+    # and can try to hand the interface to it instead of running its own
+    # userspace loop, silently dropping all obfuscation. Force pure
+    # userspace tun mode every time.
+    if lsmod | grep -q '^wireguard '; then
+        rmmod wireguard 2>/dev/null
+    fi
+    mkdir -p /etc/modprobe.d
+    echo "blacklist wireguard" > /etc/modprobe.d/blacklist-wireguard.conf
+
     # Start userspace daemon
     mkdir -p /var/run/amneziawg
-    # Bound Go heap growth, but only on genuinely low-RAM routers -- the
-    # 320MiB/GOGC=20 pairing (ported from advocdiaboly/asuswrt-merlin-
-    # amneziawg@ea58f06, Dmitry Fomin) was tuned for the smallest models in
-    # the support list. GOGC=20 forces very frequent GC cycles, which on a
-    # 512MB router under sustained high throughput (field-observed:
-    # speedtest correlating with the tunnel dropping) can't keep pace with
-    # incoming packets and the daemon dies. Only apply the aggressive limit
-    # under ~300MB actual RAM, where the original OOM risk this was meant
-    # to prevent is real; larger devices run with Go's own default pacing.
-    local mem_env="" total_mem_kb
+    # Bound Go heap growth. GOGC=20 forces frequent GC cycles; field-tested
+    # (real load: two back-to-back 100MB+ downloads through the tunnel) --
+    # WITHOUT this, amneziawg-go dies with "fatal error: runtime: out of
+    # memory" (a Go heap/virtual-address-space exhaustion on 32-bit ARM
+    # under sustained throughput, not a kernel OOM -- no dmesg trace, no
+    # OOM-killer entry, which is why this was invisible to earlier
+    # diagnosis). Previously this was only applied under ~300MB actual RAM,
+    # on the assumption the risk was model-specific; it reproduces on a
+    # 512MB router too, so scale the limit to actual RAM instead of gating
+    # it off entirely on larger devices.
+    local total_mem_kb mem_limit_mib
     total_mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
-    if [ -n "$total_mem_kb" ] && [ "$total_mem_kb" -lt 300000 ]; then
-        mem_env="GOMEMLIMIT=320MiB GOGC=20"
+    mem_limit_mib=200
+    if [ -n "$total_mem_kb" ]; then
+        mem_limit_mib=$((total_mem_kb * 2 / 5 / 1024))
+        [ "$mem_limit_mib" -lt 64 ] && mem_limit_mib=64
     fi
-    env $mem_env "$AWG_GO" "$IFACE" > /tmp/awg_daemon.log 2>&1 &
+    env GOMEMLIMIT="${mem_limit_mib}MiB" GOGC=20 "$AWG_GO" "$IFACE" > /tmp/awg_daemon.log 2>&1 &
     if ! wait_for_iface "$IFACE" 10; then
         log_msg "ERROR: amneziawg-go failed to create interface"
         [ -f /tmp/awg_daemon.log ] && log_msg "Daemon output: $(cat /tmp/awg_daemon.log)"

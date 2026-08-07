@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 PKG_NAME="amneziawg"
-PKG_VERSION="1.4.14-1"
+PKG_VERSION="1.5.0-1"
 
 build_ipk(){
     local arch="$1"
@@ -87,6 +87,13 @@ mkdir -p -m 700 /var/run/amneziawg
 mkdir -p /dev/net
 mknod -m 600 /dev/net/tun c 10 200 2>/dev/null || true
 chmod 600 /dev/net/tun 2>/dev/null || true
+
+# Vanilla in-kernel "wireguard" (stock WireGuard, no AmneziaWG obfuscation
+# support) must never be delegated to -- see amneziawg.sh do_start() for
+# why. Blacklist it here too so it's out of the way even before first start.
+mkdir -p /etc/modprobe.d
+echo "blacklist wireguard" > /etc/modprobe.d/blacklist-wireguard.conf
+lsmod | grep -q '^wireguard ' && rmmod wireguard 2>/dev/null || true
 if [ -f /usr/sbin/helper.sh ]; then
     /jffs/addons/amneziawg/amneziawg.sh install_page || true
 fi

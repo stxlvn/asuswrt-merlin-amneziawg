@@ -49,6 +49,53 @@ Two independent binaries are cross-compiled and shipped per architecture:
 Pin the `amneziawg-tools` tag to whatever upstream tag introduced the feature set you need (e.g.
 3.0 support landed after `v1.0.20260618`, in the `v3.0.*` tag series) -- check
 `amnezia-vpn/amneziawg-tools` tags/`src/config.c` if config fields silently fail to apply.
+The same 3.0 UAPI keys (`header_protection_key`, `content_padding_addition`, `rekey_after_time`,
+etc.) must also exist in `device/uapi.go` on the `amneziawg-go` side -- an old `amneziawg-go`
+build paired with a new `awg` CLI fails `setconf` with `IPC error -22: invalid UAPI device key: s3`
+(or similar) because the daemon doesn't recognize a key the CLI is now sending. Always build
+`amneziawg-go` from a `git clone` done at the same time as `amneziawg-tools`, not a long-stale
+local checkout -- version drift between the two is silent until you set a 3.0-only field.
+
+### The traceless load-crash (root-caused, fixed in v1.5.0)
+
+Field symptom: tunnel dies under sustained high throughput (e.g. speedtest goes from a few Mbit/s
+with the tunnel active to the raw ISP line rate, meaning traffic silently fell through to direct
+routing -- the tunnel had already died). No trace anywhere available to this addon: no dmesg entry,
+no OOM-killer log line, memory looks fine at rest, no crash in `amneziawg.sh`'s own logs. The
+watchdog cron auto-recovers the interface within a few minutes, which is why this shipped for
+several releases before being root-caused.
+
+Actual cause, confirmed by reproducing it live: `amneziawg-go` is a Go binary, and under sustained
+throughput its heap grows past what the 32-bit ARM (`armv7`) process's virtual address space can
+satisfy. The failure is `fatal error: runtime: out of memory` from the *Go runtime itself* (an
+`mmap` failure growing the heap) -- not a Linux OOM kill, which is why it never appears in `dmesg`.
+It's invisible to every kernel-level diagnostic (dynamic_debug, `/sys/module/wireguard/parameters/`,
+`dmesg`) because nothing at the kernel level is involved; the process just silently dies mid-packet
+and the interface it owned disappears with it.
+
+Two contributing factors, both now fixed:
+- `PreallocatedBuffersPerPool = 0` in `device/queueconstants_default.go` is upstream's own literal
+  comment: "Disable and allow for infinite memory growth". Under sustained high packet rate this is
+  exactly what happens. Build with this bumped to `1024` (as already noted above) -- this bounds the
+  pool instead of letting it grow unbounded, which is the more fundamental fix.
+- `GOMEMLIMIT`/`GOGC=20` (aggressive GC pacing) was previously only applied on routers with
+  `MemTotal` under ~300MB, on the theory that larger-RAM routers didn't need it. This was wrong --
+  reproduced live on a 512MB router with the limit unset. The limit now always applies, scaled to
+  actual `MemTotal` (`do_start()` in `amneziawg.sh`), because the failure is about 32-bit virtual
+  address space fragmentation under load, not physical RAM headroom.
+
+A secondary, independently-confirmed issue on the same router: it has a vanilla in-kernel
+`wireguard` module loaded (stock WireGuard 1.0.x, e.g. from Merlin's own native WireGuard client
+feature or a prior install) -- this is *not* an AmneziaWG-aware kernel module (there is no such
+thing shipped by Asuswrt-Merlin; a real AmneziaWG kernel module is a separate out-of-tree build from
+`amneziawg-linux-kernel-module`, not present here). `amneziawg-go`'s kernel-support probe looks for
+a link type named `wireguard`, finds the vanilla module, and can be misled into delegating the
+interface to it -- silently dropping all Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5/3.0-field obfuscation, since
+stock WireGuard's UAPI doesn't know those keys. Confirmed via `awg setconf` failing outright (`IPC
+error: invalid UAPI device key`) when the userspace daemon is bypassed and the interface is created
+directly against the kernel module (`ip link add type wireguard`). `do_start()` now blacklists and
+unloads this module every start, and `postinst` does the same at install time, to force pure
+userspace operation unconditionally.
 
 ```bash
 ./build-ipk.sh   # packages output/* into output/amneziawg_<ver>_<arch>.ipk
