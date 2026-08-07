@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.9"
+AWG_VERSION="1.4.0"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -337,6 +337,25 @@ cleanup_ipv6_block(){
     ip6tables -D FORWARD -i "$IFACE" -o br0 -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
 }
 
+# QUIC (HTTP/3, UDP/443) does its own MTU discovery independent of TCPMSS
+# clamping (TCP-only). Through a WireGuard-family tunnel the effective path
+# MTU is smaller than the LAN's 1500, and if the resulting ICMP
+# "Fragmentation Needed" never makes it back to the client (common -- ICMP
+# is dropped/filtered in plenty of places along the way), QUIC just
+# blackholes: no error, packets silently dropped, video stalls/never loads.
+# YouTube and other Google properties push QUIC hard, so this is the single
+# most common "YouTube doesn't work over VPN" cause. Reject outbound UDP/443
+# through the tunnel so the browser falls back to plain TCP/TLS instead of
+# retrying into the blackhole.
+setup_quic_block(){
+    iptables -I FORWARD -o "$IFACE" -p udp --dport 443 -j REJECT
+    log_msg "QUIC (UDP/443) blocked over tunnel to force TCP fallback"
+}
+
+cleanup_quic_block(){
+    iptables -D FORWARD -o "$IFACE" -p udp --dport 443 -j REJECT 2>/dev/null
+}
+
 cleanup_firewall(){
     # Unhook from PREROUTING, flush and delete custom chain
     iptables -t mangle -D PREROUTING -j "$AWG_CHAIN" 2>/dev/null
@@ -373,6 +392,7 @@ cleanup_firewall(){
     cru d awg_watchdog 2>/dev/null
 
     cleanup_ipv6_block
+    cleanup_quic_block
 
     log_msg "Firewall rules cleaned"
 }
@@ -428,6 +448,13 @@ restart_dnsmasq_when_idle(){
 
 setup_firewall(){
     cleanup_firewall
+
+    # Re-add right after cleanup_firewall (which just removed them) so every
+    # caller of setup_firewall -- do_start, awgsaveconf, awgupdategeo,
+    # firewall_restart -- gets these consistently, instead of relying on
+    # each call site to remember to re-add them afterward.
+    setup_ipv6_block
+    setup_quic_block
 
     local default_policy=$(get_setting awg_default_policy)
     [ -z "$default_policy" ] && default_policy="direct"
@@ -1007,7 +1034,6 @@ do_start(){
     iptables -I INPUT -i "$IFACE" -j ACCEPT
     iptables -I FORWARD -i "$IFACE" -j ACCEPT
     iptables -I FORWARD -o "$IFACE" -j ACCEPT
-    setup_ipv6_block
     iptables -t mangle -A FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
     iptables -t mangle -A FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
     if [ -n "$lan_net" ]; then
@@ -1061,6 +1087,7 @@ do_stop(){
     iptables -D FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null
     iptables -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null
     cleanup_ipv6_block
+    cleanup_quic_block
     iptables -t mangle -D FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
     iptables -t mangle -D FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
     local lan_net
@@ -1371,6 +1398,7 @@ do_firewall_restart(){
         [ -n "$lan_net_old" ] && iptables -t nat -D POSTROUTING -s "$lan_net_old" -o "$IFACE" -j MASQUERADE 2>/dev/null
         iptables -t nat -D POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null
         cleanup_ipv6_block
+        cleanup_quic_block
         iptables -I INPUT -i "$IFACE" -j ACCEPT
         iptables -I FORWARD -i "$IFACE" -j ACCEPT
         iptables -I FORWARD -o "$IFACE" -j ACCEPT
@@ -1383,7 +1411,9 @@ do_firewall_restart(){
         else
             iptables -t nat -I POSTROUTING -o "$IFACE" -j MASQUERADE
         fi
-        setup_ipv6_block
+        # setup_firewall re-adds ipv6/QUIC blocks itself right after its own
+        # cleanup_firewall call -- don't also call setup_ipv6_block here,
+        # that would insert a duplicate rule every time firewall-start fires.
         setup_firewall
         local awg_addr
         awg_addr=$(ip -4 addr show "$IFACE" 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2; exit}')
