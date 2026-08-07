@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.10"
+AWG_VERSION="1.4.11"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -30,6 +30,14 @@ GEOSITE_SERVICES="cloudflare cloudfront digitalocean discord google_ai google_me
 
 # Ensure Entware binaries are in PATH (not set when called from httpd/service-event).
 export PATH="/opt/bin:/opt/sbin:$PATH"
+
+# `-w <secs>` (wait for the xtables lock instead of erroring/hanging on
+# contention) was added in iptables 1.4.20; older builds (e.g. 1.4.15, still
+# shipped by some Merlin firmware versions) reject it outright with
+# "Bad argument". Detect support once and use whatever's safe everywhere,
+# instead of assuming every router's iptables understands v1.4.8's -w 5.
+IPT_W=""
+iptables -w 5 -L INPUT -n >/dev/null 2>&1 && IPT_W="-w 5"
 
 # Merlin firmware ships its own /usr/sbin/ipset, built and matched against
 # the router's actual kernel -- this is what Merlin itself uses internally
@@ -382,13 +390,13 @@ setup_dns_interception(){
     local router_ip
     router_ip=$(get_router_ip)
     [ -z "$router_ip" ] && router_ip="192.168.1.1"
-    iptables -w 5 -t nat -I PREROUTING -i br0 -p udp --dport 53 -j DNAT --to "$router_ip"
-    iptables -w 5 -t nat -I PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to "$router_ip"
-    iptables -w 5 -I FORWARD -i br0 -p tcp --dport 853 -j REJECT
+    iptables $IPT_W -t nat -I PREROUTING -i br0 -p udp --dport 53 -j DNAT --to "$router_ip"
+    iptables $IPT_W -t nat -I PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to "$router_ip"
+    iptables $IPT_W -I FORWARD -i br0 -p tcp --dport 853 -j REJECT
     local doh_ip
     for doh_ip in 8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1 9.9.9.9 149.112.112.112; do
-        iptables -w 5 -I FORWARD -i br0 -d "$doh_ip" -p tcp --dport 443 -j REJECT
-        iptables -w 5 -I FORWARD -i br0 -d "$doh_ip" -p udp --dport 443 -j REJECT
+        iptables $IPT_W -I FORWARD -i br0 -d "$doh_ip" -p tcp --dport 443 -j REJECT
+        iptables $IPT_W -I FORWARD -i br0 -d "$doh_ip" -p udp --dport 443 -j REJECT
     done
     log_msg "DNS interception enabled"
 }
@@ -397,14 +405,14 @@ setup_ipv6_block(){
     local ipv6_svc
     ipv6_svc=$(nvram get ipv6_service 2>/dev/null)
     [ "$ipv6_svc" = "disabled" ] || [ -z "$ipv6_svc" ] && return 0
-    ip6tables -w 5 -I FORWARD -i br0 -o "$IFACE" -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
-    ip6tables -w 5 -I FORWARD -i "$IFACE" -o br0 -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
+    ip6tables $IPT_W -I FORWARD -i br0 -o "$IFACE" -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
+    ip6tables $IPT_W -I FORWARD -i "$IFACE" -o br0 -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
     log_msg "IPv6 leak protection enabled"
 }
 
 cleanup_ipv6_block(){
-    ip6tables -w 5 -D FORWARD -i br0 -o "$IFACE" -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
-    ip6tables -w 5 -D FORWARD -i "$IFACE" -o br0 -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
+    ip6tables $IPT_W -D FORWARD -i br0 -o "$IFACE" -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
+    ip6tables $IPT_W -D FORWARD -i "$IFACE" -o br0 -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null
 }
 
 # QUIC (HTTP/3, UDP/443) does its own MTU discovery independent of TCPMSS
@@ -418,19 +426,19 @@ cleanup_ipv6_block(){
 # through the tunnel so the browser falls back to plain TCP/TLS instead of
 # retrying into the blackhole.
 setup_quic_block(){
-    iptables -w 5 -I FORWARD -o "$IFACE" -p udp --dport 443 -j REJECT
+    iptables $IPT_W -I FORWARD -o "$IFACE" -p udp --dport 443 -j REJECT
     log_msg "QUIC (UDP/443) blocked over tunnel to force TCP fallback"
 }
 
 cleanup_quic_block(){
-    iptables -w 5 -D FORWARD -o "$IFACE" -p udp --dport 443 -j REJECT 2>/dev/null
+    iptables $IPT_W -D FORWARD -o "$IFACE" -p udp --dport 443 -j REJECT 2>/dev/null
 }
 
 cleanup_firewall(){
     # Unhook from PREROUTING, flush and delete custom chain
-    iptables -w 5 -t mangle -D PREROUTING -j "$AWG_CHAIN" 2>/dev/null
-    iptables -w 5 -t mangle -F "$AWG_CHAIN" 2>/dev/null
-    iptables -w 5 -t mangle -X "$AWG_CHAIN" 2>/dev/null
+    iptables $IPT_W -t mangle -D PREROUTING -j "$AWG_CHAIN" 2>/dev/null
+    iptables $IPT_W -t mangle -F "$AWG_CHAIN" 2>/dev/null
+    iptables $IPT_W -t mangle -X "$AWG_CHAIN" 2>/dev/null
 
     # Remove all ip rules for our table/fwmark
     local _i=0; while [ $_i -lt 100 ] && ip rule del lookup $RT_TABLE 2>/dev/null; do _i=$((_i+1)); done
@@ -440,13 +448,13 @@ cleanup_firewall(){
     local router_ip
     router_ip=$(get_router_ip)
     [ -z "$router_ip" ] && router_ip="192.168.1.1"
-    iptables -w 5 -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to "$router_ip" 2>/dev/null
-    iptables -w 5 -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to "$router_ip" 2>/dev/null
-    iptables -w 5 -D FORWARD -i br0 -p tcp --dport 853 -j REJECT 2>/dev/null
+    iptables $IPT_W -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to "$router_ip" 2>/dev/null
+    iptables $IPT_W -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to "$router_ip" 2>/dev/null
+    iptables $IPT_W -D FORWARD -i br0 -p tcp --dport 853 -j REJECT 2>/dev/null
     local doh_ip
     for doh_ip in 8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1 9.9.9.9 149.112.112.112; do
-        iptables -w 5 -D FORWARD -i br0 -d "$doh_ip" -p tcp --dport 443 -j REJECT 2>/dev/null
-        iptables -w 5 -D FORWARD -i br0 -d "$doh_ip" -p udp --dport 443 -j REJECT 2>/dev/null
+        iptables $IPT_W -D FORWARD -i br0 -d "$doh_ip" -p tcp --dport 443 -j REJECT 2>/dev/null
+        iptables $IPT_W -D FORWARD -i br0 -d "$doh_ip" -p udp --dport 443 -j REJECT 2>/dev/null
     done
 
     # Destroy ipset
@@ -621,7 +629,7 @@ setup_firewall(){
     fi
 
     # --- Create custom chain in mangle table ---
-    iptables -w 5 -t mangle -N "$AWG_CHAIN" 2>/dev/null || iptables -w 5 -t mangle -F "$AWG_CHAIN"
+    iptables $IPT_W -t mangle -N "$AWG_CHAIN" 2>/dev/null || iptables $IPT_W -t mangle -F "$AWG_CHAIN"
 
     # --- Exclusion rules (evaluated first) ---
     local lan_net
@@ -629,11 +637,11 @@ setup_firewall(){
     local endpoint
     endpoint=$(get_endpoint)
 
-    iptables -w 5 -t mangle -A "$AWG_CHAIN" -m addrtype --dst-type LOCAL -j RETURN
-    [ -n "$lan_net" ] && iptables -w 5 -t mangle -A "$AWG_CHAIN" -d "$lan_net" -j RETURN
-    iptables -w 5 -t mangle -A "$AWG_CHAIN" -p udp -m multiport --dports 67,68,123 -j RETURN
-    iptables -w 5 -t mangle -A "$AWG_CHAIN" -d 224.0.0.0/4 -j RETURN
-    [ -n "$endpoint" ] && iptables -w 5 -t mangle -A "$AWG_CHAIN" -d "$endpoint" -j RETURN
+    iptables $IPT_W -t mangle -A "$AWG_CHAIN" -m addrtype --dst-type LOCAL -j RETURN
+    [ -n "$lan_net" ] && iptables $IPT_W -t mangle -A "$AWG_CHAIN" -d "$lan_net" -j RETURN
+    iptables $IPT_W -t mangle -A "$AWG_CHAIN" -p udp -m multiport --dports 67,68,123 -j RETURN
+    iptables $IPT_W -t mangle -A "$AWG_CHAIN" -d 224.0.0.0/4 -j RETURN
+    [ -n "$endpoint" ] && iptables $IPT_W -t mangle -A "$AWG_CHAIN" -d "$endpoint" -j RETURN
 
     # --- Per-device rules (two passes for correct ordering) ---
     save_clients
@@ -649,7 +657,7 @@ setup_firewall(){
 
             if [ "$default_policy" != "direct" ]; then
                 if [ -n "$mac" ]; then
-                    iptables -w 5 -t mangle -A "$AWG_CHAIN" -m mac --mac-source "$mac" -j RETURN
+                    iptables $IPT_W -t mangle -A "$AWG_CHAIN" -m mac --mac-source "$mac" -j RETURN
                 else
                     ip rule add from "$dev_id" lookup main prio 97
                 fi
@@ -669,7 +677,7 @@ setup_firewall(){
             case "$policy" in
                 vpn_all)
                     if [ -n "$mac" ]; then
-                        iptables -w 5 -t mangle -A "$AWG_CHAIN" -m mac --mac-source "$mac" -j MARK --set-mark "$FWMARK"
+                        iptables $IPT_W -t mangle -A "$AWG_CHAIN" -m mac --mac-source "$mac" -j MARK --set-mark "$FWMARK"
                     else
                         ip rule add from "$dev_id" lookup $RT_TABLE prio 99
                     fi
@@ -678,10 +686,10 @@ setup_firewall(){
                 vpn_geo)
                     if run_ipset list "$IPSET_NAME" >/dev/null 2>&1; then
                         if [ -n "$mac" ]; then
-                            iptables -w 5 -t mangle -A "$AWG_CHAIN" -m mac --mac-source "$mac" \
+                            iptables $IPT_W -t mangle -A "$AWG_CHAIN" -m mac --mac-source "$mac" \
                                 -m set --match-set "$IPSET_NAME" dst -j MARK --set-mark "$FWMARK"
                         else
-                            iptables -w 5 -t mangle -A "$AWG_CHAIN" -s "$dev_id" \
+                            iptables $IPT_W -t mangle -A "$AWG_CHAIN" -s "$dev_id" \
                                 -m set --match-set "$IPSET_NAME" dst -j MARK --set-mark "$FWMARK"
                         fi
                         has_geo=true
@@ -697,12 +705,12 @@ setup_firewall(){
     # --- Default policy (last rules in chain) ---
     case "$default_policy" in
         vpn_all)
-            iptables -w 5 -t mangle -A "$AWG_CHAIN" -j MARK --set-mark "$FWMARK"
+            iptables $IPT_W -t mangle -A "$AWG_CHAIN" -j MARK --set-mark "$FWMARK"
             log_msg "Default: all -> VPN"
             ;;
         vpn_geo)
             if run_ipset list "$IPSET_NAME" >/dev/null 2>&1; then
-                iptables -w 5 -t mangle -A "$AWG_CHAIN" \
+                iptables $IPT_W -t mangle -A "$AWG_CHAIN" \
                     -m set --match-set "$IPSET_NAME" dst -j MARK --set-mark "$FWMARK"
                 has_geo=true
                 log_msg "Default: geo -> VPN"
@@ -716,8 +724,8 @@ setup_firewall(){
     esac
 
     # --- Hook chain into PREROUTING ---
-    iptables -w 5 -t mangle -C PREROUTING -j "$AWG_CHAIN" 2>/dev/null || \
-        iptables -w 5 -t mangle -A PREROUTING -j "$AWG_CHAIN"
+    iptables $IPT_W -t mangle -C PREROUTING -j "$AWG_CHAIN" 2>/dev/null || \
+        iptables $IPT_W -t mangle -A PREROUTING -j "$AWG_CHAIN"
 
     # --- Single fwmark rule for all marked traffic ---
     ip rule add fwmark "$FWMARK" lookup $RT_TABLE prio 98
@@ -1112,15 +1120,15 @@ do_start(){
     save_and_set_rp_filter
 
     # Base iptables
-    iptables -w 5 -I INPUT -i "$IFACE" -j ACCEPT
-    iptables -w 5 -I FORWARD -i "$IFACE" -j ACCEPT
-    iptables -w 5 -I FORWARD -o "$IFACE" -j ACCEPT
-    iptables -w 5 -t mangle -A FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-    iptables -w 5 -t mangle -A FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    iptables $IPT_W -I INPUT -i "$IFACE" -j ACCEPT
+    iptables $IPT_W -I FORWARD -i "$IFACE" -j ACCEPT
+    iptables $IPT_W -I FORWARD -o "$IFACE" -j ACCEPT
+    iptables $IPT_W -t mangle -A FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    iptables $IPT_W -t mangle -A FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
     if [ -n "$lan_net" ]; then
-        iptables -w 5 -t nat -I POSTROUTING -s "$lan_net" -o "$IFACE" -j MASQUERADE
+        iptables $IPT_W -t nat -I POSTROUTING -s "$lan_net" -o "$IFACE" -j MASQUERADE
     else
-        iptables -w 5 -t nat -I POSTROUTING -o "$IFACE" -j MASQUERADE
+        iptables $IPT_W -t nat -I POSTROUTING -o "$IFACE" -j MASQUERADE
     fi
 
     setup_firewall
@@ -1164,17 +1172,17 @@ do_start(){
 do_stop(){
     acquire_lock || { log_msg "Cannot acquire lock, aborting stop"; return 1; }
 
-    iptables -w 5 -D INPUT -i "$IFACE" -j ACCEPT 2>/dev/null
-    iptables -w 5 -D FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null
-    iptables -w 5 -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null
+    iptables $IPT_W -D INPUT -i "$IFACE" -j ACCEPT 2>/dev/null
+    iptables $IPT_W -D FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null
+    iptables $IPT_W -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null
     cleanup_ipv6_block
     cleanup_quic_block
-    iptables -w 5 -t mangle -D FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
-    iptables -w 5 -t mangle -D FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+    iptables $IPT_W -t mangle -D FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+    iptables $IPT_W -t mangle -D FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
     local lan_net
     lan_net=$(get_lan_net)
-    [ -n "$lan_net" ] && iptables -w 5 -t nat -D POSTROUTING -s "$lan_net" -o "$IFACE" -j MASQUERADE 2>/dev/null
-    iptables -w 5 -t nat -D POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null
+    [ -n "$lan_net" ] && iptables $IPT_W -t nat -D POSTROUTING -s "$lan_net" -o "$IFACE" -j MASQUERADE 2>/dev/null
+    iptables $IPT_W -t nat -D POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null
 
     cleanup_firewall
 
@@ -1472,28 +1480,28 @@ do_firewall_restart(){
     if is_running; then
         log_msg "Firewall restart detected, re-applying rules"
         # Clean base rules first to prevent duplicates
-        iptables -w 5 -D INPUT -i "$IFACE" -j ACCEPT 2>/dev/null
-        iptables -w 5 -D FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null
-        iptables -w 5 -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null
-        iptables -w 5 -t mangle -D FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
-        iptables -w 5 -t mangle -D FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+        iptables $IPT_W -D INPUT -i "$IFACE" -j ACCEPT 2>/dev/null
+        iptables $IPT_W -D FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null
+        iptables $IPT_W -D FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null
+        iptables $IPT_W -t mangle -D FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
+        iptables $IPT_W -t mangle -D FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null
         local lan_net_old
         lan_net_old=$(get_lan_net)
-        [ -n "$lan_net_old" ] && iptables -w 5 -t nat -D POSTROUTING -s "$lan_net_old" -o "$IFACE" -j MASQUERADE 2>/dev/null
-        iptables -w 5 -t nat -D POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null
+        [ -n "$lan_net_old" ] && iptables $IPT_W -t nat -D POSTROUTING -s "$lan_net_old" -o "$IFACE" -j MASQUERADE 2>/dev/null
+        iptables $IPT_W -t nat -D POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null
         cleanup_ipv6_block
         cleanup_quic_block
-        iptables -w 5 -I INPUT -i "$IFACE" -j ACCEPT
-        iptables -w 5 -I FORWARD -i "$IFACE" -j ACCEPT
-        iptables -w 5 -I FORWARD -o "$IFACE" -j ACCEPT
-        iptables -w 5 -t mangle -A FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
-        iptables -w 5 -t mangle -A FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+        iptables $IPT_W -I INPUT -i "$IFACE" -j ACCEPT
+        iptables $IPT_W -I FORWARD -i "$IFACE" -j ACCEPT
+        iptables $IPT_W -I FORWARD -o "$IFACE" -j ACCEPT
+        iptables $IPT_W -t mangle -A FORWARD -o "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+        iptables $IPT_W -t mangle -A FORWARD -i "$IFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
         local lan_net
         lan_net=$(get_lan_net)
         if [ -n "$lan_net" ]; then
-            iptables -w 5 -t nat -I POSTROUTING -s "$lan_net" -o "$IFACE" -j MASQUERADE
+            iptables $IPT_W -t nat -I POSTROUTING -s "$lan_net" -o "$IFACE" -j MASQUERADE
         else
-            iptables -w 5 -t nat -I POSTROUTING -o "$IFACE" -j MASQUERADE
+            iptables $IPT_W -t nat -I POSTROUTING -o "$IFACE" -j MASQUERADE
         fi
         # setup_firewall re-adds ipv6/QUIC blocks itself right after its own
         # cleanup_firewall call -- don't also call setup_ipv6_block here,
