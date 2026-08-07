@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.5"
+AWG_VERSION="1.3.6"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -169,15 +169,19 @@ download_geoip_service(){
     svc=$(echo "$svc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
     [ -z "$svc" ] && return 1
     local tmp="$GEO_DIR/geoip/.dl_${svc}.tmp"
-    local attempt=0
+    local attempt=0 http_code rc
     while [ $attempt -lt 2 ]; do
         attempt=$((attempt + 1))
-        if curl -sfL -A "amneziawg-merlin/$AWG_VERSION" --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/Subnets/IPv4/${svc}.lst" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        http_code=$(curl -s -o "$tmp" -w '%{http_code}' -A "amneziawg-merlin/$AWG_VERSION" \
+            --connect-timeout 10 --max-time 30 -L "${ALLOWDOMAINS_BASE}/Subnets/IPv4/${svc}.lst" 2>/dev/null)
+        rc=$?
+        if [ "$rc" -eq 0 ] && [ "$http_code" = "200" ] && [ -s "$tmp" ]; then
             grep -v ":" "$tmp" > "$GEO_DIR/geoip/${svc}.cidr"
             rm -f "$tmp"
             [ -s "$GEO_DIR/geoip/${svc}.cidr" ] || { rm -f "$GEO_DIR/geoip/${svc}.cidr"; return 1; }
             return 0
         fi
+        log_msg "GeoIP $svc attempt $attempt: curl_rc=$rc http_code=${http_code:-none}"
         [ $attempt -lt 2 ] && sleep 2
     done
     rm -f "$tmp"
@@ -208,13 +212,17 @@ download_geosite_service(){
     local list_path
     list_path=$(geosite_list_path "$svc")
     local tmp="$GEO_DIR/services/.dl_${svc}.tmp"
-    local attempt=0
+    local attempt=0 http_code rc
     while [ $attempt -lt 2 ]; do
         attempt=$((attempt + 1))
-        if curl -sfL -A "amneziawg-merlin/$AWG_VERSION" --connect-timeout 10 --max-time 30 "${ALLOWDOMAINS_BASE}/${list_path}" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+        http_code=$(curl -s -o "$tmp" -w '%{http_code}' -A "amneziawg-merlin/$AWG_VERSION" \
+            --connect-timeout 10 --max-time 30 -L "${ALLOWDOMAINS_BASE}/${list_path}" 2>/dev/null)
+        rc=$?
+        if [ "$rc" -eq 0 ] && [ "$http_code" = "200" ] && [ -s "$tmp" ]; then
             mv "$tmp" "$GEO_DIR/services/${svc}.txt"
             return 0
         fi
+        log_msg "GeoSite $svc attempt $attempt: curl_rc=$rc http_code=${http_code:-none}"
         [ $attempt -lt 2 ] && sleep 2
     done
     rm -f "$tmp"
@@ -769,7 +777,9 @@ generate_config(){
         # network wasn't up yet during opkg install). This attempt is logged,
         # unlike postinst's -- whose stdout only appears in the interactive
         # opkg session, not in the persistent log.
-        if [ -z "$decoded" ] && [ ! -f /tmp/.awg_base64_install_tried ] && command -v opkg >/dev/null 2>&1; then
+        if [ -z "$decoded" ] && [ -f /tmp/.awg_base64_install_tried ]; then
+            log_msg "base64 decoder still unavailable (auto-install already attempted this boot -- reboot or run 'opkg install coreutils-base64' manually to retry)"
+        elif [ -z "$decoded" ] && command -v opkg >/dev/null 2>&1; then
             touch /tmp/.awg_base64_install_tried
             log_msg "No base64 decoder available, attempting: opkg install coreutils-base64"
             if opkg install coreutils-base64 >/dev/null 2>&1 || opkg install openssl-util >/dev/null 2>&1; then
@@ -780,6 +790,8 @@ generate_config(){
             else
                 log_msg "ERROR: opkg install coreutils-base64/openssl-util failed -- check internet/opkg feed"
             fi
+        elif [ -z "$decoded" ]; then
+            log_msg "ERROR: opkg not found, cannot auto-install a base64 decoder"
         fi
         if [ -n "$decoded" ]; then
             i1=$(echo "$decoded" | awk '/^I1 /{sub(/^[^=]+=[ ]?/,"");print;exit}')

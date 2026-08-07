@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 PKG_NAME="amneziawg"
-PKG_VERSION="1.3.4-1"
+PKG_VERSION="1.3.6-1"
 
 build_ipk(){
     local arch="$1"
@@ -68,14 +68,19 @@ ln -sf /opt/amneziawg/awg /opt/bin/awg
 
 # I1-I5 junk headers (optional AmneziaWG obfuscation fields) are stored
 # base64-encoded and need base64 (or openssl, or busybox's base64 applet) to
-# decode. None of those is guaranteed present -- both base64 and openssl are
-# optional Entware packages. Make sure at least one actually works.
+# decode. Both base64 and openssl are optional Entware packages, so neither
+# is guaranteed present. NOTE: deliberately not calling `opkg install` here --
+# postinst runs INSIDE an active opkg transaction (opkg holds its own lock/
+# status-file state while running this script), and a reentrant opkg call
+# from within it corrupts that state and makes THIS SCRIPT ITSELF fail with
+# exit 255, leaving the package stuck "unconfigured" and retried (and
+# failing the same way) on every future unrelated opkg operation. If no
+# decoder is available, amneziawg.sh's generate_config() self-heals with its
+# own opkg install the first time it's actually needed -- safe there since
+# it never runs inside an opkg transaction.
 if ! (command -v base64 >/dev/null 2>&1 || command -v openssl >/dev/null 2>&1 || \
       { command -v busybox >/dev/null 2>&1 && echo dGVzdA== | busybox base64 -d >/dev/null 2>&1; }); then
-    echo "No base64 decoder found, installing coreutils-base64..."
-    opkg update >/dev/null 2>&1
-    opkg install coreutils-base64 >/dev/null 2>&1 || opkg install openssl-util >/dev/null 2>&1 || \
-        echo "WARNING: could not install a base64 decoder automatically -- run 'opkg install coreutils-base64' manually if you use custom I1-I5 junk headers"
+    echo "No base64 decoder found -- will be auto-installed on first use of I1-I5 (or run 'opkg install coreutils-base64' yourself)"
 fi
 mkdir -p /opt/amneziawg/geo/geoip /opt/amneziawg/geo/domains
 mkdir -p -m 700 /var/run/amneziawg
