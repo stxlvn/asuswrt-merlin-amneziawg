@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.12"
+AWG_VERSION="1.4.13"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -1118,13 +1118,25 @@ do_start(){
     fi
     log_msg "Userspace daemon started"
 
-    # Configure interface
-    local setconf_err
-    setconf_err=$("$AWG_BIN" setconf "$IFACE" "$CONF" 2>&1)
-    if [ $? -ne 0 ]; then
-        log_msg "ERROR: setconf failed: ${setconf_err:-no output}"
-        ip link del "$IFACE" 2>/dev/null; update_status; release_lock; return 1
-    fi
+    # Configure interface. A freshly (re)created interface -- especially on
+    # a watchdog-triggered stop+start where the previous instance's teardown
+    # may still be settling at the kernel-module level -- has been observed
+    # to reject the very first setconf with "Protocol not supported" even
+    # though the identical config just worked moments earlier on a clean
+    # start. Retry once after a brief pause before giving up: this is a
+    # transient not-ready condition, not a real incompatibility.
+    local setconf_err setconf_try=0
+    while :; do
+        setconf_try=$((setconf_try + 1))
+        setconf_err=$("$AWG_BIN" setconf "$IFACE" "$CONF" 2>&1)
+        [ $? -eq 0 ] && break
+        if [ $setconf_try -ge 2 ]; then
+            log_msg "ERROR: setconf failed after $setconf_try attempts: ${setconf_err:-no output}"
+            ip link del "$IFACE" 2>/dev/null; update_status; release_lock; return 1
+        fi
+        log_msg "WARNING: setconf attempt $setconf_try failed (${setconf_err:-no output}), retrying"
+        sleep 2
+    done
 
     [ -f "$AWG_DIR/awg0.addr" ] && ip addr add "$(cat "$AWG_DIR/awg0.addr")" dev "$IFACE"
     ip link set "$IFACE" mtu 1280
