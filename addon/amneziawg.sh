@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.3.6"
+AWG_VERSION="1.3.7"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -779,19 +779,34 @@ generate_config(){
         # opkg session, not in the persistent log.
         if [ -z "$decoded" ] && [ -f /tmp/.awg_base64_install_tried ]; then
             log_msg "base64 decoder still unavailable (auto-install already attempted this boot -- reboot or run 'opkg install coreutils-base64' manually to retry)"
-        elif [ -z "$decoded" ] && command -v opkg >/dev/null 2>&1; then
-            touch /tmp/.awg_base64_install_tried
-            log_msg "No base64 decoder available, attempting: opkg install coreutils-base64"
-            if opkg install coreutils-base64 >/dev/null 2>&1 || opkg install openssl-util >/dev/null 2>&1; then
-                log_msg "base64 decoder installed, retrying I1-I5 decode"
-                command -v base64 >/dev/null 2>&1 && decoded=$(echo "$initdata" | base64 -d 2>/dev/null)
-                [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1 && \
-                    decoded=$(echo "$initdata" | openssl enc -base64 -d -A 2>/dev/null)
-            else
-                log_msg "ERROR: opkg install coreutils-base64/openssl-util failed -- check internet/opkg feed"
-            fi
         elif [ -z "$decoded" ]; then
-            log_msg "ERROR: opkg not found, cannot auto-install a base64 decoder"
+            # `opkg` itself may be a shell function/alias defined only in an
+            # interactive login profile (not inherited by this non-
+            # interactive script) rather than a real PATH entry -- also try
+            # opkg-cl and known absolute Entware locations before giving up.
+            local opkg_bin=""
+            for _c in opkg opkg-cl; do
+                command -v "$_c" >/dev/null 2>&1 && { opkg_bin="$_c"; break; }
+            done
+            if [ -z "$opkg_bin" ]; then
+                for _p in /opt/bin/opkg /opt/bin/opkg-cl /opt/sbin/opkg /opt/sbin/opkg-cl; do
+                    [ -x "$_p" ] && { opkg_bin="$_p"; break; }
+                done
+            fi
+            if [ -n "$opkg_bin" ]; then
+                touch /tmp/.awg_base64_install_tried
+                log_msg "No base64 decoder available, attempting: $opkg_bin install coreutils-base64"
+                if "$opkg_bin" install coreutils-base64 >/dev/null 2>&1 || "$opkg_bin" install openssl-util >/dev/null 2>&1; then
+                    log_msg "base64 decoder installed, retrying I1-I5 decode"
+                    command -v base64 >/dev/null 2>&1 && decoded=$(echo "$initdata" | base64 -d 2>/dev/null)
+                    [ -z "$decoded" ] && command -v openssl >/dev/null 2>&1 && \
+                        decoded=$(echo "$initdata" | openssl enc -base64 -d -A 2>/dev/null)
+                else
+                    log_msg "ERROR: $opkg_bin install coreutils-base64/openssl-util failed -- check internet/opkg feed"
+                fi
+            else
+                log_msg "ERROR: opkg/opkg-cl not found (PATH=$PATH), cannot auto-install a base64 decoder"
+            fi
         fi
         if [ -n "$decoded" ]; then
             i1=$(echo "$decoded" | awk '/^I1 /{sub(/^[^=]+=[ ]?/,"");print;exit}')
