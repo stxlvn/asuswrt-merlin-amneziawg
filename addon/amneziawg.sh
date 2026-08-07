@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.5"
+AWG_VERSION="1.4.6"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -28,8 +28,18 @@ ALLOWDOMAINS_BASE="https://raw.githubusercontent.com/itdoginfo/allow-domains/mai
 GEOIP_SERVICES="cloudflare cloudfront digitalocean discord google_meet hetzner meta ovh roblox telegram twitter"
 GEOSITE_SERVICES="cloudflare cloudfront digitalocean discord google_ai google_meet google_play hdrezka hetzner meta ovh roblox telegram tiktok twitter youtube anime block geoblock hodca news porn ru_inside ru_outside ua_inside"
 
-# Ensure Entware binaries are in PATH (not set when called from httpd/service-event)
+# Ensure Entware binaries are in PATH (not set when called from httpd/service-event).
+# LD_LIBRARY_PATH matters just as much and is easy to miss: PATH only finds the
+# executable, but the dynamic linker resolves *shared library* dependencies via
+# LD_LIBRARY_PATH (normally set by /opt/etc/profile in an interactive shell,
+# which this non-interactive invocation never sources). Without it, an Entware
+# binary with the same library name as one the firmware also ships (e.g.
+# ipset -> libipset.so.13) can silently link against the OLDER firmware copy in
+# /usr/lib instead of the newer /opt/lib one the binary was actually built
+# against, surfacing as a version-symbol mismatch that looks like a broken
+# opkg install even though the right package is present.
 export PATH="/opt/bin:/opt/sbin:$PATH"
+export LD_LIBRARY_PATH="/opt/lib:$LD_LIBRARY_PATH"
 
 # --- Helpers ---
 
