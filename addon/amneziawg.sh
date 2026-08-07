@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.5.1"
+AWG_VERSION="1.5.2"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -1600,6 +1600,12 @@ do_service_event(){
         awgrestart)     do_stop; wait_for_pid_exit amneziawg-go 10; do_start ;;
         awgsaveconf)
             local _wt=0; while [ $_wt -lt 5 ] && [ -z "$(get_setting awg_privatekey)" ]; do sleep 1; _wt=$((_wt+1)); done
+            # Merlin's own custom_settings.txt commit isn't a single atomic
+            # write -- it can still be flushing other keys (e.g.
+            # awg_geosite_services) after awg_privatekey is already readable,
+            # and a read mid-write can see a torn/corrupted value (observed:
+            # "russia" read back as "rlssia"). One extra settle tick covers it.
+            sleep 1
             generate_config
             # Geo settings are intentionally never auto-cleared here: an update
             # wipes /opt/amneziawg (including the downloaded geo cache) via
