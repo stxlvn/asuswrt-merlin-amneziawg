@@ -103,6 +103,7 @@
 .awg-chip { display:inline-flex; align-items:center; gap:6px; background:#3a464b; border:1px solid #55666b; border-radius:12px; padding:3px 10px; margin:2px 4px 2px 0; font-size:12px; }
 .awg-chip-remove { cursor:pointer; color:#e77; font-weight:bold; line-height:1; }
 .awg-chip-remove:hover { color:#f00; }
+.awg-taglist-error { color:#f66; font-size:11px; margin-top:4px; }
 </style>
 <script>
 var custom_settings = <% get_custom_settings(); %>;
@@ -801,6 +802,18 @@ function initTagList(fieldId, opts){
     chipsBox.className = 'awg-chips';
     wrap.appendChild(chipsBox);
 
+    var errBox = document.createElement('div');
+    errBox.className = 'awg-taglist-error';
+    errBox.style.display = 'none';
+    wrap.appendChild(errBox);
+    var errTimer = null;
+    function showError(msg){
+        errBox.textContent = msg;
+        errBox.style.display = 'block';
+        clearTimeout(errTimer);
+        errTimer = setTimeout(function(){ errBox.style.display = 'none'; }, 4000);
+    }
+
     function getItems(){
         return hidden.value ? hidden.value.split(',').map(function(s){ return s.trim(); }).filter(function(s){ return s; }) : [];
     }
@@ -853,6 +866,16 @@ function initTagList(fieldId, opts){
     function addFromInput(){
         var v = input.value.trim().toLowerCase().replace(/\s+/g, '');
         if(!v) return;
+        // Reject unknown names against the known catalog instead of silently
+        // saving a typo (e.g. "cloldflare") that only surfaces later as a
+        // buried "not cached" warning in the log.
+        if(opts.suggestions){
+            var list = typeof opts.suggestions === 'function' ? opts.suggestions() : opts.suggestions;
+            if(list && list.length > 0 && list.indexOf(v) === -1){
+                showError('Неизвестное имя "' + v + '". Выберите вариант из списка ниже.');
+                return;
+            }
+        }
         var items = getItems();
         if(items.indexOf(v) === -1){ items.push(v); setItems(items); }
         input.value = '';
