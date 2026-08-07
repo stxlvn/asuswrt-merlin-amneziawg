@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.1"
+AWG_VERSION="1.4.2"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -170,7 +170,7 @@ download_geoip_service(){
     [ -z "$svc" ] && return 1
     local tmp="$GEO_DIR/geoip/.dl_${svc}.tmp"
     local attempt=0 http_code rc
-    while [ $attempt -lt 2 ]; do
+    while [ $attempt -lt 3 ]; do
         attempt=$((attempt + 1))
         http_code=$(curl -s -o "$tmp" -w '%{http_code}' -A "amneziawg-merlin/$AWG_VERSION" \
             --connect-timeout 10 --max-time 30 -L "${ALLOWDOMAINS_BASE}/Subnets/IPv4/${svc}.lst" 2>/dev/null)
@@ -182,7 +182,13 @@ download_geoip_service(){
             return 0
         fi
         log_msg "GeoIP $svc attempt $attempt: curl_rc=$rc http_code=${http_code:-none}"
-        [ $attempt -lt 2 ] && sleep 2
+        # A real (non-network-error) 404 on an infrequently-requested file
+        # smells like a cold edge-cache miss on GitHub's raw-content CDN
+        # rather than a permanent absence (verified the file exists and
+        # resolves fine both from an unrelated network and via browser on
+        # the same network) -- back off longer than a transient failure to
+        # give the edge time to populate from origin.
+        [ $attempt -lt 3 ] && sleep $((attempt * 4))
     done
     rm -f "$tmp"
     return 1
@@ -213,7 +219,7 @@ download_geosite_service(){
     list_path=$(geosite_list_path "$svc")
     local tmp="$GEO_DIR/services/.dl_${svc}.tmp"
     local attempt=0 http_code rc
-    while [ $attempt -lt 2 ]; do
+    while [ $attempt -lt 3 ]; do
         attempt=$((attempt + 1))
         http_code=$(curl -s -o "$tmp" -w '%{http_code}' -A "amneziawg-merlin/$AWG_VERSION" \
             --connect-timeout 10 --max-time 30 -L "${ALLOWDOMAINS_BASE}/${list_path}" 2>/dev/null)
@@ -223,7 +229,12 @@ download_geosite_service(){
             return 0
         fi
         log_msg "GeoSite $svc attempt $attempt: curl_rc=$rc http_code=${http_code:-none}"
-        [ $attempt -lt 2 ] && sleep 2
+        # See matching comment in download_geoip_service: a real 404 on an
+        # infrequently-requested file looks like a cold edge-cache miss on
+        # GitHub's raw-content CDN, not a permanent absence -- confirmed the
+        # file resolves fine both from an unrelated network and via browser
+        # on the same network as the router.
+        [ $attempt -lt 3 ] && sleep $((attempt * 4))
     done
     rm -f "$tmp"
     return 1
