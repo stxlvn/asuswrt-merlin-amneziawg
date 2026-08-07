@@ -4,7 +4,7 @@
 # Userspace amneziawg-go, per-device policy routing, GeoIP/GeoSite
 # =============================================================
 
-AWG_VERSION="1.4.8"
+AWG_VERSION="1.4.9"
 ADDON_DIR="/jffs/addons/amneziawg"
 AWG_DIR="/opt/amneziawg"
 CONF="$AWG_DIR/awg0.conf"
@@ -29,17 +29,21 @@ GEOIP_SERVICES="cloudflare cloudfront digitalocean discord google_meet hetzner m
 GEOSITE_SERVICES="cloudflare cloudfront digitalocean discord google_ai google_meet google_play hdrezka hetzner meta ovh roblox telegram tiktok twitter youtube anime block geoblock hodca news porn ru_inside ru_outside ua_inside"
 
 # Ensure Entware binaries are in PATH (not set when called from httpd/service-event).
-# LD_LIBRARY_PATH matters just as much and is easy to miss: PATH only finds the
-# executable, but the dynamic linker resolves *shared library* dependencies via
-# LD_LIBRARY_PATH (normally set by /opt/etc/profile in an interactive shell,
-# which this non-interactive invocation never sources). Without it, an Entware
-# binary with the same library name as one the firmware also ships (e.g.
-# ipset -> libipset.so.13) can silently link against the OLDER firmware copy in
-# /usr/lib instead of the newer /opt/lib one the binary was actually built
-# against, surfacing as a version-symbol mismatch that looks like a broken
-# opkg install even though the right package is present.
 export PATH="/opt/bin:/opt/sbin:$PATH"
-export LD_LIBRARY_PATH="/opt/lib:$LD_LIBRARY_PATH"
+
+# ipset needs its Entware-side libipset (v1.4.6 background: PATH alone finds
+# the right /opt/sbin/ipset binary, but the dynamic linker resolves *shared
+# library* deps via LD_LIBRARY_PATH, not PATH -- without it, ipset silently
+# links against the OLDER firmware libipset.so.13 in /usr/lib and fails with
+# a version-symbol mismatch). v1.4.6 exported LD_LIBRARY_PATH globally for
+# the whole script to fix that, but that broke *other* Entware binaries that
+# were relying on the normal (non-overridden) library resolution -- notably
+# grep-gnu, which segfaults with /opt/lib forced ahead of its expected
+# libraries. Scope the override to just the one binary that actually needs
+# it instead of applying it to every subprocess this script runs.
+run_ipset(){
+    LD_LIBRARY_PATH="/opt/lib:$LD_LIBRARY_PATH" ipset "$@"
+}
 
 # --- Helpers ---
 
@@ -362,7 +366,7 @@ ipset_load_file(){
             gsub(/[[:space:]\r]/, "")
             if ($0 != "") print "add " s " " $0 " timeout 0"
         }
-    ' "$file" | ipset restore -! 2>/dev/null
+    ' "$file" | run_ipset restore -! 2>/dev/null
 }
 
 # --- Unified firewall setup ---
@@ -439,8 +443,8 @@ cleanup_firewall(){
     done
 
     # Destroy ipset
-    ipset flush "$IPSET_NAME" 2>/dev/null
-    ipset destroy "$IPSET_NAME" 2>/dev/null
+    run_ipset flush "$IPSET_NAME" 2>/dev/null
+    run_ipset destroy "$IPSET_NAME" 2>/dev/null
 
     # Remove dnsmasq config
     rm -f "$DNSMASQ_AWG_CONF"
@@ -521,8 +525,8 @@ setup_firewall(){
 
     # --- Create ipset ---
     local ipset_err
-    ipset_err=$(ipset create "$IPSET_NAME" hash:net family inet hashsize 4096 maxelem 131072 timeout 86400 2>&1)
-    if ! ipset list "$IPSET_NAME" >/dev/null 2>&1; then
+    ipset_err=$(run_ipset create "$IPSET_NAME" hash:net family inet hashsize 4096 maxelem 131072 timeout 86400 2>&1)
+    if ! run_ipset list "$IPSET_NAME" >/dev/null 2>&1; then
         log_msg "ERROR: ipset $IPSET_NAME creation failed, geo routing disabled: ${ipset_err:-no output}"
         case "$ipset_err" in
             *LIBIPSET_*|*"version \`"*)
@@ -542,7 +546,7 @@ setup_firewall(){
 
     # Check ipset fill level
     local ipset_entries
-    ipset_entries=$(ipset list "$IPSET_NAME" -t 2>/dev/null | awk '/Number of entries/{print $NF}')
+    ipset_entries=$(run_ipset list "$IPSET_NAME" -t 2>/dev/null | awk '/Number of entries/{print $NF}')
     [ -n "$ipset_entries" ] && [ "$ipset_entries" -ge 131072 ] 2>/dev/null && \
         log_msg "WARNING: ipset $IPSET_NAME full ($ipset_entries/131072), some geo routes may be missing"
 
@@ -573,7 +577,7 @@ setup_firewall(){
         mkdir -p "$GEO_DIR/geoip"
         echo "$custom_ips" | tr ',' '\n' | while read -r cidr; do
             cidr=$(echo "$cidr" | tr -d ' \r')
-            [ -n "$cidr" ] && ipset add "$IPSET_NAME" "$cidr" timeout 0 2>/dev/null
+            [ -n "$cidr" ] && run_ipset add "$IPSET_NAME" "$cidr" timeout 0 2>/dev/null
         done
     fi
 
@@ -665,7 +669,7 @@ setup_firewall(){
                     log_msg "Route: $dev_id ($name) -> VPN (all)"
                     ;;
                 vpn_geo)
-                    if ipset list "$IPSET_NAME" >/dev/null 2>&1; then
+                    if run_ipset list "$IPSET_NAME" >/dev/null 2>&1; then
                         if [ -n "$mac" ]; then
                             iptables -w 5 -t mangle -A "$AWG_CHAIN" -m mac --mac-source "$mac" \
                                 -m set --match-set "$IPSET_NAME" dst -j MARK --set-mark "$FWMARK"
@@ -690,7 +694,7 @@ setup_firewall(){
             log_msg "Default: all -> VPN"
             ;;
         vpn_geo)
-            if ipset list "$IPSET_NAME" >/dev/null 2>&1; then
+            if run_ipset list "$IPSET_NAME" >/dev/null 2>&1; then
                 iptables -w 5 -t mangle -A "$AWG_CHAIN" \
                     -m set --match-set "$IPSET_NAME" dst -j MARK --set-mark "$FWMARK"
                 has_geo=true
@@ -1241,8 +1245,8 @@ EOF
     local active_rules=$(ip rule show 2>/dev/null | grep -c "lookup $RT_TABLE\|fwmark $FWMARK")
 
     local ipset_count=0
-    ipset list "$IPSET_NAME" -t 2>/dev/null | grep -q "Number of entries" && \
-        ipset_count=$(ipset list "$IPSET_NAME" -t 2>/dev/null | awk '/Number of entries/{print $NF}')
+    run_ipset list "$IPSET_NAME" -t 2>/dev/null | grep -q "Number of entries" && \
+        ipset_count=$(run_ipset list "$IPSET_NAME" -t 2>/dev/null | awk '/Number of entries/{print $NF}')
 
     local geo_domains=0
     [ -f "$DNSMASQ_AWG_CONF" ] && geo_domains=$(grep -c "^ipset=" "$DNSMASQ_AWG_CONF" 2>/dev/null)
